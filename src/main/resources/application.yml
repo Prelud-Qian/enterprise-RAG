@@ -1,0 +1,103 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: enterprise-rag
+  # ============ 业务库 MySQL 8.0（用户/知识库/文档/问答日志） ============
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # host/port 可用环境变量覆盖（如服务放在 VMware 虚拟机：MYSQL_HOST=192.168.88.129 MYSQL_PORT=3307）
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/enterprise_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: ${MYSQL_PASSWORD:123456}
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+
+# ============ 向量库 PostgreSQL + pgvector ============
+# 注意：使用自定义前缀 pgvector.* 手动装配，避开 Boot 主数据源自动配置
+pgvector:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    # host/port 可用环境变量覆盖（PG_HOST / PG_PORT）
+    jdbc-url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/enterprise_rag
+    username: postgres
+    password: ${PG_PASSWORD:123456}
+
+# ============ RAG 全链路配置 ============
+rag:
+  # 对话模型（硅基流动，OpenAI 兼容协议）
+  llm:
+    base-url: https://api.siliconflow.cn/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: deepseek-ai/DeepSeek-V3.2
+    temperature: 0.1        # 低温度，抑制编造
+    max-tokens: 1024
+  # 向量模型 BGE-M3（1024 维）。硅基流动/百炼等任意 OpenAI 兼容端点可换
+  embedding:
+    base-url: https://api.siliconflow.cn/v1
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: BAAI/bge-m3
+    dimension: 1024
+    batch-size: 20          # 每批向量化的片段数（避免一次请求过大触发限流）
+  # 语义分块默认参数（上传接口可覆盖）
+  chunk:
+    size: 500               # 分块大小（字符）
+    overlap: 50             # 相邻块重叠字符数
+    parent-size: 2000       # 父级块大小（small-to-big：检索命中子块，喂给 LLM 父级块）；0 或 <=size 禁用
+  # 混合检索参数
+  retrieval:
+    vector-top-k: 10        # 向量召回数
+    bm25-top-k: 10          # BM25 召回数
+    final-top-k: 5          # RRF 融合后进入 Prompt 的片段数
+    min-similarity: 0.4     # 幻觉兜底阈值：最佳向量余弦相似度低于此值直接拒绝回答
+    rrf-k: 60               # RRF 融合常数
+    # Query 改写（多查询检索）：LLM 改写问题为多个检索查询，RRF 跨查询累积；失败自动降级
+    query-rewrite:
+      enabled: true
+      max-queries: 3
+  # Rerank 精排：混合检索候选 → 交叉编码器重排序（失败自动降级为 RRF 顺序）
+  rerank:
+    enabled: true
+    model: BAAI/bge-reranker-v2-m3
+    api-format: siliconflow   # 请求协议：siliconflow(顶层 query/documents) / dashscope(嵌套 input)
+    top-n: 20                 # RRF 候选取前 N 条参与精排
+    # base-url / api-key 缺省复用 rag.embedding 的配置
+  # 上传限制
+  upload:
+    max-size-mb: 20
+    tika-write-limit: 2000000   # Tika 解析写入上限（字符），防止超大文档打爆内存
+    allowed-extensions: pdf,doc,docx
+    async: false                # true=秒返回+后台处理，轮询文档状态；false=同步处理完返回
+  # RAG Prompt 模板：{context} 注入检索片段，{question} 注入用户问题
+  prompt-template: |
+    你是一名严谨的企业知识库问答助手，请严格依据【参考资料】回答用户问题。
+    规则：
+    1. 回答内容必须来自参考资料，不得使用外部知识或凭空编造；
+    2. 如果参考资料中不存在与问题相关的内容，必须只回答"没有找到相关资料"，禁止编造答案；
+    3. 回答尽量分点、简洁、准确，使用中文；
+    4. 回答末尾注明引用的来源编号，例如"参考：【来源1】【来源3】"。
+
+    【参考资料】
+    {context}
+
+    【用户问题】
+    {question}
+
+# ============ JWT ============
+jwt:
+  secret: ${JWT_SECRET:enterprise-rag-jwt-secret-change-me-in-production-2026}
+  expire-hours: 24

@@ -1,0 +1,7 @@
+target/
+docs/
+sql/
+README.md
+.git/
+.idea/
+*.iml

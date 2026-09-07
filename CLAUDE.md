@@ -1,0 +1,76 @@
+# CLAUDE.md — enterprise-RAG
+
+面试向企业知识库 RAG 问答系统。Spring Boot 3.3 + LangChain4j 1.7 + MySQL(业务) + PostgreSQL/pgvector(向量) + 通义千问/BGE-M3(OpenAI 兼容协议)。纯后端 RESTful，无前端。
+
+## 常用命令
+
+```bash
+mvn -q compile          # 编译（本机 Maven 已绑定 JDK17；PATH 默认 java 是 1.8，别用 java 命令验证）
+mvn test                # 17 个单元测试（分块/BM25/RRF 融合/多查询/父块展开/分词），改检索逻辑必跑
+mvn spring-boot:run     # 启动，先决条件见下
+python docs/eval/eval.py --token <JWT> --kb 1 --k 5   # 检索评测（Hit@5 报告）
+```
+
+启动前：执行 `sql/mysql_schema.sql` + `sql/pgvector_schema.sql`（PG 需装 vector 扩展），设 `DASHSCOPE_API_KEY`。数据库不在本机：README「方式二」有 VM 内 Docker 部署命令。
+
+## 架构（包职责一句话）
+
+```
+common/    Result 统一返回、BusinessException、LoginUser、GlobalExceptionHandler
+config/    Security(JWT+RBAC)、双数据源(PG 手动装配)、模型 Bean、rag.* 属性类、Swagger
+controller/ Auth / KnowledgeBase / Document / Qa / Admin —— 只做参数校验与编排
+service/   RAG 全链路：分块、向量化、BM25、Query改写、混合检索、精排、问答、日志
+dao/mapper/ MyBatis-Plus（MySQL）   dao/pg/ VectorStoreDao 手写 SQL（pgvector）
+entity/    实体 + dto/ + vo/
+util/      SecurityUtil、JiebaUtil
+```
+
+## RAG 链路（每一步的代码位置）
+
+```
+上传: DocumentService.processDocument
+  ① Tika 解析(字节流,writeLimit防OOM) → ② ChunkingService 两级分块(small-to-big:
+     先按 parent-size 切父块,父块内按 size/overlap 切子块;子块入库+向量化,父块文本随行存 parent_content)
+  → ③ EmbeddingService BGE-M3 批量(20/批+重试) → ④ VectorStoreDao 批量入库 pgvector
+  → ⑤ bm25IndexService.rebuild(kbId)
+问答: QaService.ask / askStream(SSE)
+  ① QueryRewriteService 多查询改写(失败降级原问题) → ② 每查询: 向量 Top10 + BM25 Top10
+  → ③ RRF(k=60) 跨查询累积 → ④ RerankService gte-rerank 精排(失败降级 RRF 序)
+  → ⑤ 父级块展开(small-to-big: 子块换父块文本,同父块去重留高分) → ⑥ 兜底判定(maxSimilarity<0.4 不调 LLM)
+  → ⑦ Prompt 注入 [来源n]《文件》第x段 → ⑧ LLM(DeepSeek-V3.2, temp 0.1) → ⑨ QaLogService 审计落库
+```
+
+## 关键不变量（改代码前必读）
+
+1. **知识库隔离**：一切按 kb 操作的入口必须先过 `KnowledgeBaseService.requireAccess(kbId)`（404/403）；pgvector 的 SQL 必须带 `kb_id` 过滤（存储层兜底）
+2. **双数据源无事务**：MySQL(MP 主数据源) + PG(`@Qualifier("pgJdbcTemplate")`) 不能放一个事务里。PG 操作不要加 `@Transactional`；一致性靠 document 状态机（PARSING/READY/FAILED）+ 失败补偿（`processDocument` 的 catch 里删片段、标 FAILED）
+3. **BM25 索引失效**：文档增删、知识库删除后必须 `bm25IndexService.rebuild(kbId)`，否则检索到已删数据（懒加载+整体重建策略）
+4. **small-to-big 数据形态**：document_chunk 的 content=子块（检索/向量化对象），parent_content=父块（喂 LLM 用，可空）；`chunk.parent-size<=size` 时退化为单级分块。老库需 `ALTER TABLE document_chunk ADD COLUMN parent_content TEXT;`
+5. **外部依赖必须降级**：QueryRewrite / Rerank / Embedding 重试，任何模型服务故障不能让主链路 500 —— 降级路径：改写→原问题、精排→RRF 序、兜底→固定话术
+6. **流式接口不走 Result 包装**：`/ask/stream` 返回 SseEmitter（message/sources/error 事件），统一异常处理管不到它，错误在 askStream 内部消化
+7. **异步上传**：`rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池
+
+## 技术栈版本坑（锁版本的原因，别乱升级）
+
+- **LangChain4j 1.7**：接口叫 `ChatModel`（不是 0.x 的 `ChatLanguageModel`）；`embed()` 返回 `Response<Embedding>` 要 `.content()`；流式用 `StreamingChatModel.chat(ChatRequest, StreamingChatResponseHandler)`（onPartialResponse/onCompleteResponse/onError）。网上教程大多是 0.x 旧 API
+- **jieba-analysis 1.0.2**：分词方法是 `process(text, SegMode)`，不是 `segment`；SEARCH 模式细分复合词，索引与查询必须同一分词口径（JiebaUtil 统一）
+- **jjwt 0.12**：`Jwts.parser().verifyWith(key).build().parseSignedClaims()` 新 API，与 0.11 不兼容
+- **pgvector**：HNSW 索引要求 pgvector ≥ 0.5；SQL 用 `<=>` 余弦距离、`CAST(:embedding AS vector)`
+- **springdoc 2.6**：Swagger UI 在 `/swagger-ui.html`，JWT 在右上角 Authorize 填
+- **双数据源三连坑（真实踩过，勿重蹈）**：① PG 数据源 bean 先于 Boot 自动配置注册会让 MySQL 自动配置退避、MP 的 SQL 全打到 PG → 主数据源必须手动声明 `@Primary`；② `spring.datasource.url` 绑不到 HikariDataSource（setter 叫 jdbcUrl）→ 必须经 `DataSourceProperties` 中转；③ `SqlParameterSourceUtils.createBatch` 会把 MapSqlParameterSource 当 JavaBean 反射 → 批量入库直接传 `SqlParameterSource[]` 给 NamedParameterJdbcTemplate.batchUpdate
+- **Lombok is 前缀陷阱**：`private boolean isFallback` 的 getter 是 `isFallback()`，Jackson 会输出 `"fallback"` → 对外字段名必须用 `@JsonProperty("isFallback")` 固定
+- **PG DDL 不支持 MySQL 风格行内注释**：`COMMENT '...'` 是语法错误，用 `--`
+
+## 配置与环境
+
+- `application.yml` 按 spring.datasource(MySQL) / pgvector.datasource / rag.* / jwt 分区；`rag.prompt-template` 占位符是 `{context}` `{question}`
+- 环境变量：`DASHSCOPE_API_KEY`（必填，**当前装的是硅基流动 key**，变量名沿用旧名）、`MYSQL_HOST/MYSQL_PORT/PG_HOST/PG_PORT`（切 VM 部署用）、`MYSQL_PASSWORD/PG_PASSWORD`、`SERVER_PORT`（8080/8081 常被本机其他 java 项目占用）
+- 模型默认走硅基流动 `https://api.siliconflow.cn/v1`：LLM=`deepseek-ai/DeepSeek-V3.2`（免费额度）、Embedding=`BAAI/bge-m3`、Rerank=`BAAI/bge-reranker-v2-m3` + `api-format: siliconflow`（siliconflow 与 dashscope 的 /rerank 请求协议不同，换百炼要同步改 api-format 为 dashscope）
+- 已知事实：embedding/rerank 需账户有余额（报 30001 就是没充值）；bge-m3 向量 1024 维，与 pgvector 表结构强绑定，换 embedding 模型必须同步改维度
+- **用户偏好**：第三方服务（MySQL/pgvector）放 VMware 虚拟机里的 Docker，不放 Windows 本机；mall-swarm VM(192.168.88.129) 已占用 3306，本项目的 mysql 容器用 3307。涉及部署/连库前先确认用户是否要现在部署
+
+## 工作约定（用户要求）
+
+- 中文回复，代码/命令/路径英文；结论先行，不过度铺垫
+- 不自动 git commit/push；删除文件、改密钥/连接配置前先问
+- 改 RAG 检索相关逻辑（分块/融合/阈值/精排）必须同步跑 `mvn test` 并更新 README 的链路表格

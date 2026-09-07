@@ -1,0 +1,70 @@
+# 一键启动：MySQL 8 + PostgreSQL(pgvector) + 应用
+# 用法: DASHSCOPE_API_KEY=sk-xxx docker compose up -d --build
+services:
+
+  mysql:
+    image: mysql:8.0
+    container_name: rag-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: enterprise_rag
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动自动执行建表脚本
+      - ./sql/mysql_schema.sql:/docker-entrypoint-initdb.d/01-mysql_schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p123456"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pgvector:
+    # 官方维护的 pgvector 镜像（内置 vector 扩展）
+    image: pgvector/pgvector:pg16
+    container_name: rag-pgvector
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123456"
+      POSTGRES_DB: enterprise_rag
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./sql/pgvector_schema.sql:/docker-entrypoint-initdb.d/01-pgvector_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    container_name: rag-app
+    ports:
+      - "8080:8080"
+    environment:
+      # 模型 API Key（必填，宿主机环境变量传入）
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # 覆盖 yml 中的连接地址，指向 compose 网络内的服务名
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/enterprise_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: "123456"
+      PGVECTOR_DATASOURCE_JDBCURL: jdbc:postgresql://pgvector:5432/enterprise_rag
+      PGVECTOR_DATASOURCE_USERNAME: postgres
+      PGVECTOR_DATASOURCE_PASSWORD: "123456"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  pg-data:
