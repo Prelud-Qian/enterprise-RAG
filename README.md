@@ -101,6 +101,8 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 
 `maxSimilarity` 的分布也是调 `rag.retrieval.min-similarity` 兜底阈值的依据：把标注集里 MISS 样本的相似度上界作为阈值参考。
 
+**已跑通的实测结果**（2026-09-07，见 [docs/eval/eval_report.md](docs/eval/eval_report.md)）：4 份仿真制度文档 → 8 子块 → 30 条标注问答 → **Hit@5 = 100%**，平均相似度 0.654。语料 docx 在 `docs/eval/corpus/`，`generate_corpus.py` 一键生成并上传，整套评测可复现。
+
 ## 快速开始
 
 > ✅ 2026-09-07 全链路冒烟 8/8 通过（注册/登录/建库/上传 docx/问答溯源/幻觉兜底/仅检索/审计日志），部署形态为方式二（VM 内存储 + 本机应用）。
