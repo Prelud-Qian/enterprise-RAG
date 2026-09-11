@@ -65,6 +65,34 @@
 
 ## RAG 核心链路
 
+**文档入库（离线流程）**：
+
+```
+上传请求
+  → ① 文件校验（扩展名白名单/大小/文件名清洗）
+  → ② Tika 解析（字节流不落盘，writeLimit 防 OOM）
+  → ③ 两级分块（父块 2000 → 子块 500/overlap 50，small-to-big）
+  → ④ BGE-M3 批量向量化（20/批 + 2 次重试 + 维度校验）
+  → ⑤ pgvector 批量入库（kb_id/doc_id/chunk_index + parent_content）
+  → ⑥ BM25 索引重建（懒加载，文档变更后整体重建）
+  → ⑦ 状态机置 READY（失败 → 删已入库片段 + 标 FAILED 补偿）
+```
+
+**问答（在线 RAG 链路）**：
+
+```
+提问
+  → ① 权限校验（requireAccess：kb 与用户绑定，检索前拦截）
+  → ② Query 改写（LLM 多查询，失败降级原问题）
+  → ③ 混合检索（向量 Top10 + BM25 Top10 → RRF 跨查询融合）
+  → ④ Rerank 精排（gte-rerank，失败降级 RRF 顺序）
+  → ⑤ 父块展开（子块换父块文本，同父块去重留高分）
+  → ⑥ 幻觉兜底（maxSimilarity < 0.4 → 固定话术，不调 LLM）
+  → ⑦ Prompt 组装（注入 [来源n]《文件名》第x段）
+  → ⑧ LLM 生成（DeepSeek-V3.2，temp 0.1）
+  → ⑨ 审计落库（qa_log：问题/答案/上下文/来源/耗时）
+```
+
 代码内每步都有详细注释，对应文件：
 
 | 步骤 | 代码位置 |
@@ -103,9 +131,43 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 
 **已跑通的实测结果**（2026-09-07，见 [docs/eval/eval_report.md](docs/eval/eval_report.md)）：4 份仿真制度文档 → 8 子块 → 30 条标注问答 → **Hit@5 = 100%**，平均相似度 0.654。语料 docx 在 `docs/eval/corpus/`，`generate_corpus.py` 一键生成并上传，整套评测可复现。
 
+## 实测验证记录（2026-09-07，VM 部署形态）
+
+**① 文档解析与分块**（同一考勤制度 docx 按三组分块参数上传对比）：
+
+| 文件 | chunkSize/overlap | 分块数 |
+|---|---|---|
+| Word | 500/50（默认） | 1 |
+| Word | 300/30 | 2 |
+| Word | 800/80 | 1 |
+| 中文 PDF | 500/50 | 1（PDF 解析链路正常） |
+
+**② 向量入库校验**（pgvector 直查）：5 行全部 1024 维、零向量 0、唯一约束 (doc_id, chunk_index) 无冲突、overlap 重叠文本在库内可见。
+
+**③ 混合检索**（三类提问均命中，精排分 0.89~0.96）：关键词精确型（"补卡次数一个月不能超过几次？"）、语义改写型（"上班忘了打卡怎么办？"，字面无"补卡"）、否定句型（"没提前申请算加班吗？"）。
+
+**④ 问答全链路**（提问→检索→Prompt→LLM→答案+引用）：答案准确并带【来源n】标注；qa_log 审计表的 `retrieved_context` 可还原注入 Prompt 的上下文；引用片段返回父块展开全文（small-to-big 生效证据）。
+
+**⑤ 幻觉兜底**：3 个库外问题（比特币/周边餐厅/薛定谔方程）全部返回固定话术、isFallback=true、零引用——答案与话术一字不差，证明未经过 LLM 直接短路。
+
+**⑥ 性能**：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建 + Query 改写），稳态 **5~7s/问**（Query 改写 + Rerank 两次 LLM 调用是延迟大头；低延迟场景可关 `rag.retrieval.query-rewrite.enabled` 或换更小模型）。
+
+**⑦ RBAC 与全局异常**（接口扫描 23/23 通过）：bob 对 alice 的知识库做检索/提问/文档/日志访问全部 **403**（`requireAccess` 在检索之前拦截，未进入检索阶段）；存储层 pgvector SQL 强制 `kb_id` 过滤（alice 检索结果 docId 全部属于她自己的库）；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
+
+## 项目亮点
+
+- **检索链路完整且每步可降级**：多查询改写 → 混合检索（向量+BM25，RRF 融合）→ Rerank 精排 → 父块展开——任一外部依赖故障自动降级，主链路不 500
+- **幻觉三重防线**：检索质量阈值兜底（不调 LLM 直接拒绝）→ Prompt 强约束 → 低温度生成，库外问题实测 100% 拒绝编造
+- **small-to-big 两级分块**：500 字子块保证检索定位精度，2000 字父块保证喂给 LLM 的上下文完整，同父块去重
+- **RBAC 检索阶段过滤**：权限校验在检索之前拦截 + pgvector SQL 层 `kb_id` 兜底，双保险，越权请求进不了检索阶段
+- **双数据源工程实践**：MySQL 业务 + PG 向量无分布式事务，用文档状态机 + 失败补偿保证最终一致（三个真实踩坑已文档化）
+- **模型供应商可插拔**：OpenAI 兼容协议，硅基流动/百炼换 base-url + model 即切；Rerank 双协议兼容
+- **数据说话**：17 单测 / 接口扫描 23/23 / 冒烟 8/8 / 检索评测 Hit@5=100%，评测体系可复现（docs/eval/）
+- **手写核心不做黑盒**：BM25 倒排索引、pgvector SQL、语义分块全部手写，面试能讲清每一行原理
+
 ## 快速开始
 
-> ✅ 2026-09-07 全链路冒烟 8/8 通过（注册/登录/建库/上传 docx/问答溯源/幻觉兜底/仅检索/审计日志），部署形态为方式二（VM 内存储 + 本机应用）。
+> ✅ 2026-09-07 全链路冒烟 8/8 通过（注册/登录/建库/上传 docx/问答溯源/幻觉兜底/仅检索/审计日志），部署形态为方式二（VM 内存储 + 本机应用）；六模块实测记录（分块参数/向量校验/混合检索/问答链路/幻觉兜底/性能）见「实测验证记录」。
 
 ### 方式一：Docker Compose 一键环境（推荐，无需本地装数据库）
 
@@ -177,6 +239,8 @@ mvn spring-boot:run
 > 启动后可打开 Swagger UI 在线调试全部接口：`http://localhost:8080/swagger-ui.html`（右上角 Authorize 填 JWT）
 
 ## 技术选型对比（面试素材）
+
+> 五道必考题的口述版答案（分块权衡 / pgvector 选型 / 混合检索 / 幻觉抑制 / RAG vs 微调）见 **[docs/interview-notes.md](docs/interview-notes.md)**
 
 ### 1. 向量库：pgvector vs Milvus / Chroma
 

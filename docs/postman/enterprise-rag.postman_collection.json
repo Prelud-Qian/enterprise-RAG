@@ -1,0 +1,258 @@
+{
+  "info": {
+    "name": "enterprise-RAG API",
+    "description": "企业知识库 RAG 问答系统接口集合。使用顺序：Auth(登录拿 token 自动写入变量) → KnowledgeBase(建库自动写入 kbId) → Document(上传文档) → Qa(提问/检索/日志) → Admin(需 ADMIN 角色)。变量 baseUrl 改成实际地址。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:9090" },
+    { "key": "token", "value": "" },
+    { "key": "kbId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "body": { "mode": "raw", "raw": "{\"username\": \"alice\", \"password\": \"123456\"}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('注册成功或用户已存在', function () {",
+                "  pm.expect(pm.response.json().code).to.be.oneOf([200, 400]);",
+                "});"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "body": { "mode": "raw", "raw": "{\"username\": \"alice\", \"password\": \"123456\"}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('登录成功', function () {",
+                "  pm.expect(pm.response.json().code).to.eql(200);",
+                "});",
+                "if (pm.response.json().code === 200) {",
+                "  pm.collectionVariables.set('token', pm.response.json().data.token);",
+                "}"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "me",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "KnowledgeBase",
+      "item": [
+        {
+          "name": "create",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/kb", "host": ["{{baseUrl}}"], "path": ["api", "kb"] },
+            "body": { "mode": "raw", "raw": "{\"name\": \"员工制度库\", \"description\": \"postman 演示\"}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "if (pm.response.json().code === 200) {",
+                "  pm.collectionVariables.set('kbId', pm.response.json().data.id);",
+                "}"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "list",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/kb", "host": ["{{baseUrl}}"], "path": ["api", "kb"] }
+          }
+        },
+        {
+          "name": "getById",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/kb/{{kbId}}", "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}"] }
+          }
+        },
+        {
+          "name": "delete",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/kb/{{kbId}}", "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Document",
+      "item": [
+        {
+          "name": "upload (multipart)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/documents/upload", "host": ["{{baseUrl}}"], "path": ["api", "documents", "upload"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "kbId", "value": "{{kbId}}", "type": "text" },
+                { "key": "chunkSize", "value": "500", "type": "text", "disabled": true },
+                { "key": "chunkOverlap", "value": "50", "type": "text", "disabled": true },
+                { "key": "file", "type": "file", "src": [], "description": "选一个 PDF/Word 文件" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('上传成功且 READY', function () {",
+                "  pm.expect(pm.response.json().code).to.eql(200);",
+                "  pm.expect(pm.response.json().data.status).to.eql('READY');",
+                "});"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "list",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/documents?kbId={{kbId}}&page=1&size=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "documents"],
+              "query": [
+                { "key": "kbId", "value": "{{kbId}}" },
+                { "key": "page", "value": "1" },
+                { "key": "size", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "delete",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/documents/{docId}", "host": ["{{baseUrl}}"], "path": ["api", "documents", "{docId}"], "description": "docId 从 list 响应里取" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Qa",
+      "item": [
+        {
+          "name": "ask",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/kb/{{kbId}}/ask", "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}", "ask"] },
+            "body": { "mode": "raw", "raw": "{\"question\": \"员工年假有多少天？\"}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('回答非空且带兜底标记', function () {",
+                "  pm.expect(pm.response.json().code).to.eql(200);",
+                "  pm.expect(pm.response.json().data.answer).to.be.a('string').and.not.empty;",
+                "  pm.expect(pm.response.json().data.isFallback).to.be.a('boolean');",
+                "});"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "ask (幻觉兜底验证)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/kb/{{kbId}}/ask", "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}", "ask"] },
+            "body": { "mode": "raw", "raw": "{\"question\": \"比特币现在值得买吗？\"}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('库外问题触发兜底不编造', function () {",
+                "  pm.expect(pm.response.json().data.isFallback).to.eql(true);",
+                "  pm.expect(pm.response.json().data.answer).to.include('没有找到相关资料');",
+                "});"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "search (仅检索)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/kb/{{kbId}}/search", "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}", "search"] },
+            "body": { "mode": "raw", "raw": "{\"question\": \"加班费怎么算？\"}" }
+          }
+        },
+        {
+          "name": "qa-logs (审计)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/kb/{{kbId}}/qa-logs?page=1&size=10",
+              "host": ["{{baseUrl}}"], "path": ["api", "kb", "{{kbId}}", "qa-logs"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "size", "value": "10" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "users (仅 ADMIN)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/admin/users?page=1&size=10", "host": ["{{baseUrl}}"], "path": ["api", "admin", "users"], "query": [{ "key": "page", "value": "1" }, { "key": "size", "value": "10" }] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('普通用户应 403（RBAC 验证）', function () {",
+                "  pm.expect(pm.response.code).to.eql(403);",
+                "});"
+              ] }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 # Postman 接口调用示例
 
-所有示例均为 curl 形式，可直接复制到 Postman（Import → Raw text）或命令行执行。
-`{{token}}` 为登录接口返回的 JWT，放在请求头 `Authorization: Bearer {{token}}`。
+> **可直接导入的 Postman Collection**：[docs/postman/enterprise-rag.postman_collection.json](postman/enterprise-rag.postman_collection.json)
+> 导入后把变量 `baseUrl` 改成实际地址（默认 http://localhost:9090），按 Auth → KnowledgeBase → Document → Qa 顺序执行：登录后 token 自动写入变量，建库后 kbId 自动写入。集合内含断言脚本（登录成功、上传 READY、兜底话术、ADMIN 403 等），点 Runner 一键跑全链路。
+
+以下为等价 curl 示例，便于命令行执行。`{{token}}` 为登录接口返回的 JWT，放在请求头 `Authorization: Bearer {{token}}`。
 
 > 也可直接用 Swagger UI 在线调试：`http://localhost:8080/swagger-ui.html`（右上角 Authorize 填 JWT）。
 
