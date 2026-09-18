@@ -20,11 +20,13 @@ public class VectorStoreDao {
     @Qualifier("pgJdbcTemplate")
     private final NamedParameterJdbcTemplate jdbc;
 
-    /** 批量写入片段向量（含父级块 parent_content，可空） */
+    /** 批量写入片段向量（含父块/章节路径/父块摘要元数据） */
     public void insertBatch(List<ChunkRecord> chunks) {
         String sql = """
-                INSERT INTO document_chunk (kb_id, doc_id, chunk_index, content, parent_content, embedding)
-                VALUES (:kbId, :docId, :chunkIndex, :content, :parentContent, CAST(:embedding AS vector))
+                INSERT INTO document_chunk
+                    (kb_id, doc_id, chunk_index, content, parent_content, heading_path, parent_index, summary, embedding)
+                VALUES (:kbId, :docId, :chunkIndex, :content, :parentContent, :headingPath, :parentIndex, :summary,
+                        CAST(:embedding AS vector))
                 """;
         List<MapSqlParameterSource> batch = chunks.stream()
                 .map(c -> new MapSqlParameterSource()
@@ -33,6 +35,9 @@ public class VectorStoreDao {
                         .addValue("chunkIndex", c.chunkIndex())
                         .addValue("content", c.content())
                         .addValue("parentContent", c.parentContent())
+                        .addValue("headingPath", c.headingPath())
+                        .addValue("parentIndex", c.parentIndex())
+                        .addValue("summary", c.summary())
                         .addValue("embedding", toVectorLiteral(c.embedding())))
                 .toList();
         // 直接传数组：SqlParameterSourceUtils.createBatch 会把 MapSqlParameterSource
@@ -46,7 +51,7 @@ public class VectorStoreDao {
      */
     public List<VectorHit> searchByKb(Long kbId, float[] queryVector, int topK) {
         String sql = """
-                SELECT c.doc_id, c.chunk_index, c.content, c.parent_content,
+                SELECT c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
                        1 - (c.embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM document_chunk c
                 WHERE c.kb_id = :kbId
@@ -57,22 +62,49 @@ public class VectorStoreDao {
                 .addValue("kbId", kbId)
                 .addValue("embedding", toVectorLiteral(queryVector))
                 .addValue("topK", topK);
-        return jdbc.query(sql, params, (rs, n) -> new VectorHit(
-                rs.getLong("doc_id"),
-                rs.getInt("chunk_index"),
-                rs.getString("content"),
-                rs.getDouble("similarity"),
-                rs.getString("parent_content")));
+        return jdbc.query(sql, params, rowMapper());
+    }
+
+    /**
+     * 范围内向量检索（摘要树检索第二阶段）：只在摘要召回命中的 (doc_id, parent_index)
+     * 范围内检索子块；scopes 为空时调用方应改用全量 searchByKb
+     */
+    public List<VectorHit> searchByKb(Long kbId, float[] queryVector, int topK, List<Scope> scopes) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
+                       1 - (c.embedding <=> CAST(:embedding AS vector)) AS similarity
+                FROM document_chunk c
+                WHERE c.kb_id = :kbId
+                  AND (c.doc_id, c.parent_index) IN (
+                """);
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("kbId", kbId)
+                .addValue("embedding", toVectorLiteral(queryVector))
+                .addValue("topK", topK);
+        for (int i = 0; i < scopes.size(); i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append("(:doc").append(i).append(", :parent").append(i).append(')');
+            params.addValue("doc" + i, scopes.get(i).docId());
+            params.addValue("parent" + i, scopes.get(i).parentIndex());
+        }
+        sql.append(")\n ORDER BY c.embedding <=> CAST(:embedding AS vector)\n LIMIT :topK");
+        return jdbc.query(sql.toString(), params, rowMapper());
     }
 
     /** 加载某知识库全部片段（构建 BM25 索引用） */
     public List<ChunkRef> loadChunksByKb(Long kbId) {
-        String sql = "SELECT doc_id, chunk_index, content, parent_content FROM document_chunk WHERE kb_id = :kbId ORDER BY doc_id, chunk_index";
+        String sql = """
+                SELECT doc_id, chunk_index, content, parent_content, heading_path
+                FROM document_chunk WHERE kb_id = :kbId ORDER BY doc_id, chunk_index
+                """;
         return jdbc.query(sql, new MapSqlParameterSource("kbId", kbId), (rs, n) -> new ChunkRef(
                 rs.getLong("doc_id"),
                 rs.getInt("chunk_index"),
                 rs.getString("content"),
-                rs.getString("parent_content")));
+                rs.getString("parent_content"),
+                rs.getString("heading_path")));
     }
 
     public void deleteByDocId(Long docId) {
@@ -85,10 +117,18 @@ public class VectorStoreDao {
                 new MapSqlParameterSource("kbId", kbId));
     }
 
-    public long countByKb(Long kbId) {
-        Long count = jdbc.queryForObject("SELECT count(*) FROM document_chunk WHERE kb_id = :kbId",
-                new MapSqlParameterSource("kbId", kbId), Long.class);
-        return count == null ? 0 : count;
+    private org.springframework.jdbc.core.RowMapper<VectorHit> rowMapper() {
+        return (rs, n) -> new VectorHit(
+                rs.getLong("doc_id"),
+                rs.getInt("chunk_index"),
+                rs.getString("content"),
+                rs.getDouble("similarity"),
+                rs.getString("parent_content"),
+                rs.getString("heading_path"));
+    }
+
+    /** 摘要召回范围：(docId, parentIndex) */
+    public record Scope(Long docId, Integer parentIndex) {
     }
 
     /**

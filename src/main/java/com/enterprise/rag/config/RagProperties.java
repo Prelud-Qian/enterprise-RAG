@@ -22,6 +22,8 @@ public class RagProperties {
     private Retrieval retrieval = new Retrieval();
     /** Rerank 精排 */
     private Rerank rerank = new Rerank();
+    /** 父块摘要（RAPTOR 简化版摘要树） */
+    private Summary summary = new Summary();
     /** 上传限制 */
     private Upload upload = new Upload();
     /** Prompt 模板，占位符 {context} {question} */
@@ -86,6 +88,16 @@ public class RagProperties {
         private String apiFormat = "dashscope";
         /** RRF 候选取前 N 条参与精排（精排模型按 token 计费，控制成本） */
         private Integer topN = 20;
+    }
+
+    @Data
+    public static class Summary {
+        /** 是否启用摘要树检索（入库生成摘要 + 检索先搜摘要定范围） */
+        private Boolean enabled = true;
+        /** 摘要召回数：决定子块检索的父块范围大小 */
+        private Integer topN = 3;
+        /** 单条摘要最大长度（字符） */
+        private Integer maxChars = 60;
     }
 
     @Data

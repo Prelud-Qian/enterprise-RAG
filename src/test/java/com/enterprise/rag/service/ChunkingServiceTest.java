@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ChunkingServiceTest {
@@ -58,5 +59,27 @@ class ChunkingServiceTest {
             assertTrue(pair.parent().contains(pair.child()));
             assertTrue(pair.parent().length() > pair.child().length());
         }
+    }
+
+    @Test
+    @DisplayName("标题感知：标题强制断块，块带章节路径，标题块不参与 overlap")
+    void 标题断块与路径() {
+        String text = "员工手册\n第一章 休假制度\n第一条 员工入职满一年后，每年享有五天带薪年假。\n第二条 员工因私事需要请假的，应当提前申请。";
+        List<ChunkingService.StructuredChunk> chunks = service.chunkStructured(text, 30, 10, 100);
+        assertEquals(4, chunks.size());
+        // 标题块不被上一块 overlap 污染
+        ChunkingService.StructuredChunk chapter = chunks.stream()
+                .filter(c -> c.child().startsWith("第一章 休假制度")).findFirst().orElseThrow();
+        assertTrue(chapter.child().startsWith("第一章 休假制度"));
+        // 第一条块路径包含 章+条 两级
+        ChunkingService.StructuredChunk first = chunks.stream()
+                .filter(c -> c.child().startsWith("第一条")).findFirst().orElseThrow();
+        assertTrue(first.headingPath().contains("第一章 休假制度"));
+        assertTrue(first.headingPath().contains("第一条"));
+        // 第二条块路径已切换到第二条
+        ChunkingService.StructuredChunk second = chunks.stream()
+                .filter(c -> c.child().startsWith("第二条")).findFirst().orElseThrow();
+        assertTrue(second.headingPath().contains("第二条"));
+        assertFalse(second.headingPath().contains("第一条"));
     }
 }

@@ -76,11 +76,8 @@ public class QaService {
                     .build());
             answer = response.aiMessage().text();
 
-            // 溯源：返回引用来源片段
-            sources = retrieval.chunks().stream()
-                    .map(c -> new SourceVO(c.getDocId(), c.getFileName(),
-                            c.getChunkIndex(), c.getContent(), c.getScore()))
-                    .toList();
+            // 溯源：返回引用来源片段（含章节路径与命中词）
+            sources = retrieval.chunks().stream().map(this::toSource).toList();
             // 二次兜底：模型仍输出"找不到"话术时同样标记（审计用）
             fallback = answer.contains("没有找到相关资料");
         }
@@ -117,10 +114,7 @@ public class QaService {
         String systemPrompt = props.getPromptTemplate()
                 .replace("{context}", context)
                 .replace("{question}", question);
-        List<SourceVO> sources = retrieval.chunks().stream()
-                .map(c -> new SourceVO(c.getDocId(), c.getFileName(),
-                        c.getChunkIndex(), c.getContent(), c.getScore()))
-                .toList();
+        List<SourceVO> sources = retrieval.chunks().stream().map(this::toSource).toList();
 
         streamingChatModel.chat(ChatRequest.builder()
                 .messages(SystemMessage.from(systemPrompt), UserMessage.from(question))
@@ -169,11 +163,13 @@ public class QaService {
     public SearchResponse search(Long kbId, String question) {
         knowledgeBaseService.requireAccess(kbId);
         RetrievalResult retrieval = retrievalService.retrieve(kbId, question);
-        List<SourceVO> sources = retrieval.chunks().stream()
-                .map(c -> new SourceVO(c.getDocId(), c.getFileName(),
-                        c.getChunkIndex(), c.getContent(), c.getScore()))
-                .toList();
+        List<SourceVO> sources = retrieval.chunks().stream().map(this::toSource).toList();
         return new SearchResponse(retrieval.maxVectorSimilarity(), sources);
+    }
+
+    private SourceVO toSource(RetrievedChunk c) {
+        return new SourceVO(c.getDocId(), c.getFileName(), c.getChunkIndex(),
+                c.getContent(), c.getScore(), c.getHeadingPath(), c.getMatchedTerms());
     }
 
     /** 上下文拼接：给来源片段编号，方便模型在回答中引用【来源n】 */

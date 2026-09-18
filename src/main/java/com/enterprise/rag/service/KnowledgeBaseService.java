@@ -5,6 +5,7 @@ import com.enterprise.rag.common.BusinessException;
 import com.enterprise.rag.common.LoginUser;
 import com.enterprise.rag.dao.mapper.DocumentMapper;
 import com.enterprise.rag.dao.mapper.KnowledgeBaseMapper;
+import com.enterprise.rag.dao.pg.SummaryDao;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
 import com.enterprise.rag.entity.Document;
 import com.enterprise.rag.entity.KnowledgeBase;
@@ -26,6 +27,7 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final DocumentMapper documentMapper;
     private final VectorStoreDao vectorStoreDao;
+    private final SummaryDao summaryDao;
     private final Bm25IndexService bm25IndexService;
 
     public KnowledgeBaseVO create(KbRequest req) {
@@ -55,11 +57,12 @@ public class KnowledgeBaseService {
 
     public void delete(Long id) {
         requireAccess(id);
-        // 级联清理：文档元数据 → pgvector 片段 → 知识库本体
+        // 级联清理：文档元数据 → pgvector 片段与摘要 → 知识库本体
         List<Document> docs = documentMapper.selectList(
                 new LambdaQueryWrapper<Document>().eq(Document::getKbId, id));
         docs.forEach(d -> documentMapper.deleteById(d.getId()));
         vectorStoreDao.deleteByKbId(id);
+        summaryDao.deleteByKbId(id);
         knowledgeBaseMapper.deleteById(id);
         bm25IndexService.rebuild(id);
     }

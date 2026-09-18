@@ -7,6 +7,8 @@ import com.enterprise.rag.common.LoginUser;
 import com.enterprise.rag.config.RagProperties;
 import com.enterprise.rag.dao.mapper.DocumentMapper;
 import com.enterprise.rag.dao.pg.ChunkRecord;
+import com.enterprise.rag.dao.pg.SummaryDao;
+import com.enterprise.rag.dao.pg.SummaryRecord;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
 import com.enterprise.rag.entity.Document;
 import com.enterprise.rag.entity.vo.DocumentVO;
@@ -28,7 +30,9 @@ import org.xml.sax.SAXException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 
@@ -50,6 +54,8 @@ public class DocumentService {
     private final ChunkingService chunkingService;
     private final EmbeddingService embeddingService;
     private final VectorStoreDao vectorStoreDao;
+    private final SummaryDao summaryDao;
+    private final SummaryService summaryService;
     private final Bm25IndexService bm25IndexService;
     private final DocumentMapper documentMapper;
     private final RagProperties props;
@@ -128,45 +134,81 @@ public class DocumentService {
             // 【RAG-1】文档解析：Tika 自动识别 PDF/Word，提取纯文本
             String text = parseText(data, fileName);
 
-            // 【RAG-2】语义分块：两级分块（small-to-big）——
-            // 子块做向量化与检索（定位精准），父级块文本随子块入库（命中后展开喂给 LLM）
+            // 【RAG-2】结构化分块：标题感知 + 两级（small-to-big），
+            // 每块带章节路径（heading_path）与父块序号（parent_index），父块文本随子块入库
             int parentSize = props.getChunk().getParentSize();
-            List<ChunkingService.ChunkPair> pairs = parentSize > chunkSize
-                    ? chunkingService.chunkWithParents(text, chunkSize, chunkOverlap, parentSize)
-                    : chunkingService.chunk(text, chunkSize, chunkOverlap).stream()
-                            .map(c -> new ChunkingService.ChunkPair(c, null)).toList();
-            if (pairs.isEmpty()) {
+            List<ChunkingService.StructuredChunk> chunks =
+                    chunkingService.chunkStructured(text, chunkSize, chunkOverlap, parentSize);
+            if (chunks.isEmpty()) {
                 throw new BusinessException("文档未解析出有效文本内容");
             }
+            boolean withParents = chunks.get(0).parentIndex() > 0;
 
-            // 【RAG-3】向量化：BGE-M3 批量调用（batch-size 防止一次请求过大触发限流）
-            // 【RAG-4】入库：片段原文 + 向量 + 元数据（kb_id/doc_id/片段序号）写入 pgvector
-            int batchSize = props.getEmbedding().getBatchSize();
-            for (int start = 0; start < pairs.size(); start += batchSize) {
-                int end = Math.min(start + batchSize, pairs.size());
-                List<ChunkingService.ChunkPair> batch = pairs.subList(start, end);
-                List<float[]> vectors = embeddingService.embedBatch(
-                        batch.stream().map(ChunkingService.ChunkPair::child).toList());
-                List<ChunkRecord> records = new ArrayList<>(batch.size());
-                for (int j = 0; j < batch.size(); j++) {
-                    ChunkingService.ChunkPair pair = batch.get(j);
-                    // chunk_index 从 1 开始，溯源时展示"第x段"
-                    records.add(new ChunkRecord(doc.getKbId(), doc.getId(), start + j + 1,
-                            pair.child(), vectors.get(j), pair.parent()));
+            // 【RAG-2.5】父块摘要（RAPTOR 简化版摘要树的上半场）：
+            // LLM 为每个父块生成一句话摘要，失败的单块跳过（检索侧自动降级）
+            Map<Integer, String> summaryByIndex = new LinkedHashMap<>();
+            if (withParents) {
+                Map<Integer, String> parentByIndex = new LinkedHashMap<>();
+                chunks.forEach(c -> parentByIndex.putIfAbsent(c.parentIndex(), c.parent()));
+                List<Integer> parentIdxList = new ArrayList<>(parentByIndex.keySet());
+                List<String> summaries = summaryService.summarize(
+                        parentIdxList.stream().map(parentByIndex::get).toList());
+                for (int i = 0; i < parentIdxList.size(); i++) {
+                    if (summaries.get(i) != null) {
+                        summaryByIndex.put(parentIdxList.get(i), summaries.get(i));
+                    }
                 }
-                vectorStoreDao.insertBatch(records);
-                log.info("文档[{}]向量化入库进度: {}/{} 片段", doc.getId(), end, pairs.size());
             }
 
-            doc.setChunkCount(pairs.size());
+            // 【RAG-3】统一批量向量化：子块文本 + 摘要文本 一次任务队列分批调用 BGE-M3，
+            // 减少模型 API 往返次数（batch-size 防止单次请求过大触发限流）
+            List<String> childTexts = chunks.stream().map(ChunkingService.StructuredChunk::child).toList();
+            List<String> summaryTexts = new ArrayList<>(summaryByIndex.values());
+            List<String> allTexts = new ArrayList<>(childTexts);
+            allTexts.addAll(summaryTexts);
+            List<float[]> allVectors = new ArrayList<>(allTexts.size());
+            int batchSize = props.getEmbedding().getBatchSize();
+            for (int start = 0; start < allTexts.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, allTexts.size());
+                allVectors.addAll(embeddingService.embedBatch(allTexts.subList(start, end)));
+                log.info("文档[{}]向量化进度: {}/{} 文本", doc.getId(), end, allTexts.size());
+            }
+            List<float[]> childVectors = allVectors.subList(0, childTexts.size());
+            List<float[]> summaryVectors = allVectors.subList(childTexts.size(), allVectors.size());
+
+            // 【RAG-4】入库：子块（原文+向量+元数据）写入 pgvector
+            List<ChunkRecord> records = new ArrayList<>(chunks.size());
+            for (int j = 0; j < chunks.size(); j++) {
+                ChunkingService.StructuredChunk c = chunks.get(j);
+                // chunk_index 从 1 开始，溯源时展示"第x段"
+                records.add(new ChunkRecord(doc.getKbId(), doc.getId(), j + 1, c.child(),
+                        childVectors.get(j), c.parent(), c.headingPath(),
+                        withParents ? c.parentIndex() : null,
+                        withParents ? summaryByIndex.get(c.parentIndex()) : null));
+            }
+            vectorStoreDao.insertBatch(records);
+
+            // 摘要行入库 chunk_summary（向量已随统一批次生成）
+            if (!summaryVectors.isEmpty()) {
+                List<SummaryRecord> summaryRecords = new ArrayList<>(summaryVectors.size());
+                int k = 0;
+                for (Map.Entry<Integer, String> e : summaryByIndex.entrySet()) {
+                    summaryRecords.add(new SummaryRecord(doc.getKbId(), doc.getId(),
+                            e.getKey(), e.getValue(), summaryVectors.get(k++)));
+                }
+                summaryDao.insertBatch(summaryRecords);
+            }
+
+            doc.setChunkCount(chunks.size());
             doc.setStatus(Document.STATUS_READY);
             documentMapper.updateById(doc);
 
             // 新片段加入后，重建该知识库 BM25 索引
             bm25IndexService.rebuild(doc.getKbId());
         } catch (Exception e) {
-            // 失败补偿：清掉可能已入库的片段，文档标记 FAILED，保证不产生脏向量
+            // 失败补偿：清掉可能已入库的片段与摘要，文档标记 FAILED，保证不产生脏向量
             vectorStoreDao.deleteByDocId(doc.getId());
+            summaryDao.deleteByDocId(doc.getId());
             doc.setStatus(Document.STATUS_FAILED);
             doc.setErrorMsg(truncate(e.getMessage(), 500));
             documentMapper.updateById(doc);
@@ -198,8 +240,9 @@ public class DocumentService {
             throw new BusinessException(404, "文档不存在");
         }
         knowledgeBaseService.requireAccess(doc.getKbId());
-        // 先删向量片段再删元数据，随后重建 BM25 索引
+        // 先删向量片段与摘要再删元数据，随后重建 BM25 索引
         vectorStoreDao.deleteByDocId(docId);
+        summaryDao.deleteByDocId(docId);
         documentMapper.deleteById(docId);
         bm25IndexService.rebuild(doc.getKbId());
     }

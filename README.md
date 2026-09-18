@@ -71,11 +71,12 @@
 上传请求
   → ① 文件校验（扩展名白名单/大小/文件名清洗）
   → ② Tika 解析（字节流不落盘，writeLimit 防 OOM）
-  → ③ 两级分块（父块 2000 → 子块 500/overlap 50，small-to-big）
-  → ④ BGE-M3 批量向量化（20/批 + 2 次重试 + 维度校验）
-  → ⑤ pgvector 批量入库（kb_id/doc_id/chunk_index + parent_content）
-  → ⑥ BM25 索引重建（懒加载，文档变更后整体重建）
-  → ⑦ 状态机置 READY（失败 → 删已入库片段 + 标 FAILED 补偿）
+  → ③ 标题感知两级分块（第X章/条为边界，块带章节路径与父块序号，small-to-big）
+  → ④ LLM 生成父块摘要（RAPTOR 简化版，单块失败自动跳过）
+  → ⑤ BGE-M3 批量向量化（子块+摘要统一批次，20/批 + 重试 + 维度校验）
+  → ⑥ pgvector 批量入库（子块→document_chunk，摘要→chunk_summary）
+  → ⑦ BM25 索引重建（懒加载，文档变更后整体重建）
+  → ⑧ 状态机置 READY（失败 → 删片段+摘要 + 标 FAILED 补偿）
 ```
 
 **问答（在线 RAG 链路）**：
@@ -84,11 +85,12 @@
 提问
   → ① 权限校验（requireAccess：kb 与用户绑定，检索前拦截）
   → ② Query 改写（LLM 多查询，失败降级原问题）
-  → ③ 混合检索（向量 Top10 + BM25 Top10 → RRF 跨查询融合）
+  → ③ 摘要树检索（先搜父块摘要定范围 → 范围内子块向量 Top10）
+       + BM25 Top10（含命中词记录）→ RRF 跨查询融合
   → ④ Rerank 精排（gte-rerank，失败降级 RRF 顺序）
   → ⑤ 父块展开（子块换父块文本，同父块去重留高分）
   → ⑥ 幻觉兜底（maxSimilarity < 0.4 → 固定话术，不调 LLM）
-  → ⑦ Prompt 组装（注入 [来源n]《文件名》第x段）
+  → ⑦ Prompt 组装（注入 [来源n]《文件名》章节路径）
   → ⑧ LLM 生成（DeepSeek-V3.2，temp 0.1）
   → ⑨ 审计落库（qa_log：问题/答案/上下文/来源/耗时）
 ```
@@ -98,11 +100,12 @@
 | 步骤 | 代码位置 |
 |---|---|
 | ① 文档解析 | `DocumentService.parseText()` — Tika 自动识别 PDF/Word，writeLimit 防 OOM，不落盘 |
-| ② 语义分块 | `ChunkingService.chunk()` — 优先段落/句子边界切分，超限硬切，相邻块 overlap |
-| ③ 向量化 | `EmbeddingService.embedBatch()` — BGE-M3 批量调用（默认 20/批），2 次重试 + 维度校验 |
-| ④ 入库 | `VectorStoreDao.insertBatch()` — pgvector 批量 INSERT，kb_id/doc_id/chunk_index 元数据 |
+| ② 语义分块 | `ChunkingService.chunkStructured()` — 标题感知两级分块：第X章/条强制断块、块带章节路径（heading_path）与父块序号（parent_index）、标题块跳过 overlap、父块 2000/子块 500 small-to-big |
+| ②.5 父块摘要 | `SummaryService.summarize()` — LLM 为每个父块生成一句话摘要（RAPTOR 简化版），失败单块跳过 |
+| ③ 向量化 | `EmbeddingService.embedBatch()` — BGE-M3 批量调用（子块+摘要统一批次，20/批），2 次重试 + 维度校验 |
+| ④ 入库 | `VectorStoreDao.insertBatch()` + `SummaryDao.insertBatch()` — 子块入 document_chunk（含章节路径/父块序号/摘要），摘要入 chunk_summary |
 | ④.5 Query 改写 | `QueryRewriteService.rewrite()` — LLM 把问题改写成多个检索查询（失败降级原始问题），RRF 跨查询累积 |
-| ⑤ 混合检索 | `RetrievalService.retrieve()` — 每个查询 向量 Top10 + BM25 Top10 → RRF(k=60) 融合 → 候选集 |
+| ⑤ 混合检索 | `RetrievalService.retrieve()` — 摘要树检索（先搜摘要定父块范围→范围内子块向量 Top10）+ BM25 Top10（含命中词）→ RRF(k=60) 融合 → 候选集 |
 | ⑤.5 精排 | `RerankService.rerank()` — gte-rerank 交叉编码器重排序取 Top5，失败自动降级 RRF 顺序 |
 | ⑤.6 父级块展开 | `RetrievalService.expandToParents()` — small-to-big：命中的子块展开为父级块喂给 LLM，同父块去重 |
 | ⑥ 幻觉兜底 | `QaService.ask()` — 最佳相似度 < 0.4 或无召回 → 不调 LLM，直接返回固定话术 |
@@ -154,11 +157,14 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 
 **⑦ RBAC 与全局异常**（接口扫描 23/23 通过）：bob 对 alice 的知识库做检索/提问/文档/日志访问全部 **403**（`requireAccess` 在检索之前拦截，未进入检索阶段）；存储层 pgvector SQL 强制 `kb_id` 过滤（alice 检索结果 docId 全部属于她自己的库）；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
 
+**⑧ RAGFlow 三件套验证**（2026-09-18）：① 标题感知分块把 4 份语料从 8 块切到 **41 块**（每"条"独立成块），search 响应带章节路径（如"第三章 考勤与休假 > 第五条 …"）与 BM25 命中词；② chunk_summary 摘要表每父块一行（12/12 章节路径覆盖）；③ 新链路回归评测 **Hit@5 保持 100%**，平均相似度 0.654 → **0.712**（更细分块定位更准）。期间模型 API 6 次瞬时超时均被 LangChain4j 重试恢复，未影响任何请求。
+
 ## 项目亮点
 
 - **检索链路完整且每步可降级**：多查询改写 → 混合检索（向量+BM25，RRF 融合）→ Rerank 精排 → 父块展开——任一外部依赖故障自动降级，主链路不 500
 - **幻觉三重防线**：检索质量阈值兜底（不调 LLM 直接拒绝）→ Prompt 强约束 → 低温度生成，库外问题实测 100% 拒绝编造
 - **small-to-big 两级分块**：500 字子块保证检索定位精度，2000 字父块保证喂给 LLM 的上下文完整，同父块去重
+- **对标 RAGFlow 的三件套**：① 标题感知分块 + 章节级溯源（"员工手册 > 第三章 考勤与休假 > 第五条"）；② BM25 命中词返回（可解释"为什么召回这块"）；③ RAPTOR 简化版摘要树（先搜摘要定范围再精检子块，两级检索）
 - **RBAC 检索阶段过滤**：权限校验在检索之前拦截 + pgvector SQL 层 `kb_id` 兜底，双保险，越权请求进不了检索阶段
 - **双数据源工程实践**：MySQL 业务 + PG 向量无分布式事务，用文档状态机 + 失败补偿保证最终一致（三个真实踩坑已文档化）
 - **模型供应商可插拔**：OpenAI 兼容协议，硅基流动/百炼换 base-url + model 即切；Rerank 双协议兼容

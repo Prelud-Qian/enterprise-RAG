@@ -29,15 +29,19 @@ util/      SecurityUtil、JiebaUtil
 
 ```
 上传: DocumentService.processDocument
-  ① Tika 解析(字节流,writeLimit防OOM) → ② ChunkingService 两级分块(small-to-big:
-     先按 parent-size 切父块,父块内按 size/overlap 切子块;子块入库+向量化,父块文本随行存 parent_content)
-  → ③ EmbeddingService BGE-M3 批量(20/批+重试) → ④ VectorStoreDao 批量入库 pgvector
+  ① Tika 解析(字节流,writeLimit防OOM) → ② ChunkingService.chunkStructured 标题感知两级分块:
+     第X章/条强制断块,块带 heading_path(章节路径)/parent_index(父块序号)/parent_content;
+     标题块跳过 overlap;parent-size<=size 退化为单级(parent=null,parent_index=0)
+  → ②.5 SummaryService LLM 父块一句话摘要(失败单块跳过,检索侧降级) → ③ EmbeddingService 统一批量
+     (子块文本+摘要文本一批,20/批+重试) → ④ 双表入库: VectorStoreDao(document_chunk) + SummaryDao(chunk_summary)
   → ⑤ bm25IndexService.rebuild(kbId)
 问答: QaService.ask / askStream(SSE)
-  ① QueryRewriteService 多查询改写(失败降级原问题) → ② 每查询: 向量 Top10 + BM25 Top10
+  ① QueryRewriteService 多查询改写(失败降级原问题) → ② 摘要树检索: SummaryDao 搜摘要 Top3 定
+     (doc_id,parent_index) 范围 → 范围内 VectorStoreDao 向量 Top10(摘要为空降级全库) + BM25 Top10(含命中词)
   → ③ RRF(k=60) 跨查询累积 → ④ RerankService gte-rerank 精排(失败降级 RRF 序)
-  → ⑤ 父级块展开(small-to-big: 子块换父块文本,同父块去重留高分) → ⑥ 兜底判定(maxSimilarity<0.4 不调 LLM)
-  → ⑦ Prompt 注入 [来源n]《文件》第x段 → ⑧ LLM(DeepSeek-V3.2, temp 0.1) → ⑨ QaLogService 审计落库
+  → ⑤ 父级块展开(small-to-big: 子块换父块文本,同父块去重留高分;保留 headingPath/matchedTerms)
+  → ⑥ 兜底判定(maxSimilarity<0.4 不调 LLM) → ⑦ Prompt 注入 [来源n]《文件》第x段
+  → ⑧ LLM(DeepSeek-V3.2, temp 0.1) → ⑨ QaLogService 审计落库
 ```
 
 ## 关键不变量（改代码前必读）
@@ -45,10 +49,11 @@ util/      SecurityUtil、JiebaUtil
 1. **知识库隔离**：一切按 kb 操作的入口必须先过 `KnowledgeBaseService.requireAccess(kbId)`（404/403）；pgvector 的 SQL 必须带 `kb_id` 过滤（存储层兜底）
 2. **双数据源无事务**：MySQL(MP 主数据源) + PG(`@Qualifier("pgJdbcTemplate")`) 不能放一个事务里。PG 操作不要加 `@Transactional`；一致性靠 document 状态机（PARSING/READY/FAILED）+ 失败补偿（`processDocument` 的 catch 里删片段、标 FAILED）
 3. **BM25 索引失效**：文档增删、知识库删除后必须 `bm25IndexService.rebuild(kbId)`，否则检索到已删数据（懒加载+整体重建策略）
-4. **small-to-big 数据形态**：document_chunk 的 content=子块（检索/向量化对象），parent_content=父块（喂 LLM 用，可空）；`chunk.parent-size<=size` 时退化为单级分块。老库需 `ALTER TABLE document_chunk ADD COLUMN parent_content TEXT;`
-5. **外部依赖必须降级**：QueryRewrite / Rerank / Embedding 重试，任何模型服务故障不能让主链路 500 —— 降级路径：改写→原问题、精排→RRF 序、兜底→固定话术
-6. **流式接口不走 Result 包装**：`/ask/stream` 返回 SseEmitter（message/sources/error 事件），统一异常处理管不到它，错误在 askStream 内部消化
-7. **异步上传**：`rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池
+4. **small-to-big 数据形态**：document_chunk 的 content=子块（检索/向量化对象），parent_content=父块（喂 LLM 用，可空）；heading_path=章节路径、parent_index=父块序号（0=单级模式）；`chunk.parent-size<=size` 时退化为单级分块。老库升级 SQL 见 sql/pgvector_schema.sql 注释
+5. **chunk_summary 与 document_chunk 同生命周期**：文档删除/失败补偿/知识库删除必须同时删两张表（summaryDao.deleteByDocId/deleteByKbId），否则摘要树检索会命中已删文档
+6. **外部依赖必须降级**：QueryRewrite / Rerank / Embedding / Summary 任一步失败都不能让主链路 500 —— 降级路径：改写→原问题、精排→RRF 序、摘要→无摘要全库检索、兜底→固定话术
+7. **流式接口不走 Result 包装**：`/ask/stream` 返回 SseEmitter（message/sources/error 事件），统一异常处理管不到它，错误在 askStream 内部消化
+8. **异步上传**：`rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池
 
 ## 技术栈版本坑（锁版本的原因，别乱升级）
 
@@ -71,7 +76,7 @@ util/      SecurityUtil、JiebaUtil
 
 ## 实测基准（2026-09-07，VM 部署形态，改动前对照）
 
-- 检索评测 Hit@5=100%（4 文档/8 块/30 标注，docs/eval/）；全链路冒烟 8/8；模块六测全过（分块参数/向量校验/混合检索/问答链路/幻觉兜底/性能，README「实测验证记录」）
+- 检索评测 Hit@5=100%（4 文档/41 块（标题感知分块后）/30 标注，2026-09-18 新链路复测，平均相似度 0.712，docs/eval/）；全链路冒烟 8/8；模块六测全过；单元测试 20 个（含标题分块/摘要范围检索/命中词透传）
 - 性能：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建），稳态 5~7s/问——延迟大头是 Query 改写 + Rerank 两次 LLM 调用，低延迟场景可关 `rag.retrieval.query-rewrite.enabled`
 - 兜底阈值 `min-similarity: 0.4` 有数据支撑（命中样本相似度均 >0.54，可收紧到 0.5）
 - 运行环境：企业级 VM(192.168.88.130) 需先开机（无 vmrun 无法远程开机，要用户动手）；应用 `SERVER_PORT=9090` + 4 个数据库环境变量启动；改动检索逻辑后以这些基准数做回归对照

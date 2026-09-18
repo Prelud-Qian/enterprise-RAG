@@ -44,7 +44,7 @@ public class Bm25IndexService {
         indexes.remove(kbId);
     }
 
-    /** BM25 检索：返回 TopK 命中（score 越大越相关） */
+    /** BM25 检索：返回 TopK 命中（score 越大越相关），并记录每块的命中词（高亮/可解释性） */
     public synchronized List<Bm25Hit> search(Long kbId, String query, int topK) {
         KbIndex index = indexes.computeIfAbsent(kbId, this::build);
         if (index.docs().isEmpty()) {
@@ -53,8 +53,9 @@ public class Bm25IndexService {
 
         List<String> terms = JiebaUtil.tokenize(query);
         double[] scores = new double[index.docs().size()];
+        Map<Integer, List<String>> matchedTerms = new HashMap<>();
 
-        // 对查询的每个词累加 BM25 得分
+        // 对查询的每个词累加 BM25 得分，并记录命中词
         for (String term : terms) {
             Map<Integer, Integer> postings = index.postings().get(term);
             if (postings == null) {
@@ -67,6 +68,7 @@ public class Bm25IndexService {
                 int tf = entry.getValue();
                 double dl = index.docLen()[i];
                 scores[i] += idf * (tf * (K1 + 1)) / (tf + K1 * (1 - B + B * dl / index.avgDocLen()));
+                matchedTerms.computeIfAbsent(i, k -> new ArrayList<>()).add(term);
             }
         }
 
@@ -77,7 +79,8 @@ public class Bm25IndexService {
                 continue;
             }
             ChunkRef ref = index.docs().get(i);
-            pq.offer(new Bm25Hit(ref.docId(), ref.chunkIndex(), ref.content(), scores[i], ref.parentContent()));
+            pq.offer(new Bm25Hit(ref.docId(), ref.chunkIndex(), ref.content(), scores[i],
+                    ref.parentContent(), ref.headingPath(), matchedTerms.getOrDefault(i, List.of())));
             if (pq.size() > topK) {
                 pq.poll();
             }

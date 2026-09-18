@@ -3,6 +3,7 @@ package com.enterprise.rag.service;
 import com.enterprise.rag.dao.pg.Bm25Hit;
 import com.enterprise.rag.dao.pg.ChunkRef;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
+import com.enterprise.rag.util.JiebaUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,9 @@ class Bm25IndexServiceTest {
         assertEquals(10L, hits.get(0).docId());
         assertEquals(1, hits.get(0).chunkIndex());
         assertTrue(hits.get(0).score() > 0);
+        // 命中词记录：该块的命中词非空且是查询分词后的子集（关键词高亮用）
+        assertFalse(hits.get(0).matchedTerms().isEmpty());
+        assertTrue(JiebaUtil.tokenize("年假怎么休").containsAll(hits.get(0).matchedTerms()));
     }
 
     @Test

@@ -3,6 +3,8 @@ package com.enterprise.rag.service;
 import com.enterprise.rag.config.RagProperties;
 import com.enterprise.rag.dao.mapper.DocumentMapper;
 import com.enterprise.rag.dao.pg.Bm25Hit;
+import com.enterprise.rag.dao.pg.SummaryDao;
+import com.enterprise.rag.dao.pg.SummaryHit;
 import com.enterprise.rag.dao.pg.VectorHit;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
 import com.enterprise.rag.entity.Document;
@@ -20,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -41,17 +44,20 @@ class RetrievalServiceTest {
     private RerankService rerankService;
     @Mock
     private QueryRewriteService queryRewriteService;
+    @Mock
+    private SummaryDao summaryDao;
 
     private RetrievalService service;
 
     @BeforeEach
     void setUp() {
         RagProperties props = new RagProperties();
-        service = new RetrievalService(embeddingService, vectorStoreDao,
-                bm25IndexService, documentMapper, props, rerankService, queryRewriteService);
+        service = new RetrievalService(embeddingService, vectorStoreDao, bm25IndexService,
+                documentMapper, props, rerankService, queryRewriteService, summaryDao);
         // 默认不做改写（改写行为单独用例覆盖），保持原查询
         when(queryRewriteService.rewrite(anyString()))
                 .thenAnswer(inv -> List.of(inv.getArgument(0, String.class)));
+        // 默认摘要召回为空 → 走全库检索（Mockito 对 List 返回值默认返回空集合）
     }
 
     @Test
@@ -153,6 +159,53 @@ class RetrievalServiceTest {
         assertEquals(parent, result.chunks().get(0).getContent());
         assertEquals(1, result.chunks().get(0).getChunkIndex());   // 保留得分最高子块的溯源
         assertEquals("独立子块", result.chunks().get(1).getContent());
+    }
+
+    @Test
+    @DisplayName("摘要树检索：摘要命中时子块向量检索限定在命中父块范围内")
+    void 摘要范围检索() {
+        when(rerankService.rerank(anyString(), any(), anyInt())).thenAnswer(inv -> {
+            List<RetrievedChunk> candidates = inv.getArgument(1);
+            int topK = inv.getArgument(2);
+            return candidates.stream().limit(topK).toList();
+        });
+        when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
+        // 摘要召回命中 2 个父块范围
+        when(summaryDao.searchByKb(eq(1L), any(), eq(3))).thenReturn(List.of(
+                new SummaryHit(1L, 1, "休假制度摘要", 0.8),
+                new SummaryHit(1L, 2, "薪酬福利摘要", 0.7)));
+        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10), anyList())).thenReturn(List.of(
+                new VectorHit(1L, 3, "年假五天", 0.9, "父块一", "员工手册 > 第三章 休假制度 > 第五条")));
+        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of());
+        when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(doc(1L, "员工手册")));
+
+        RetrievalResult result = service.retrieve(1L, "测试问题");
+
+        // 范围内检索被调用（带 scopes 参数），普通全库检索未被调用
+        verify(vectorStoreDao).searchByKb(eq(1L), any(), eq(10), anyList());
+        verify(vectorStoreDao, never()).searchByKb(eq(1L), any(), eq(10));
+        // 章节路径与父块透传
+        assertEquals("员工手册 > 第三章 休假制度 > 第五条", result.chunks().get(0).getHeadingPath());
+        assertEquals("父块一", result.chunks().get(0).getContent());   // 父块展开
+    }
+
+    @Test
+    @DisplayName("命中词透传：BM25 命中的查询词随结果返回")
+    void 命中词透传() {
+        when(rerankService.rerank(anyString(), any(), anyInt())).thenAnswer(inv -> {
+            List<RetrievedChunk> candidates = inv.getArgument(1);
+            int topK = inv.getArgument(2);
+            return candidates.stream().limit(topK).toList();
+        });
+        when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
+        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10))).thenReturn(List.of());
+        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of(
+                new Bm25Hit(1L, 1, "关键词片段", 2.0, null, null, List.of("年假", "十三薪"))));
+        when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(doc(1L, "文件A")));
+
+        RetrievalResult result = service.retrieve(1L, "测试问题");
+
+        assertEquals(List.of("年假", "十三薪"), result.chunks().get(0).getMatchedTerms());
     }
 
     private Document doc(Long id, String fileName) {
