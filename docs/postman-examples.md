@@ -184,7 +184,7 @@ curl -X POST http://localhost:8080/api/kb/1/search \
   -d '{"question":"员工年假有多少天？"}'
 ```
 
-响应（sources 按精排/RRF 得分排序，maxSimilarity 供兜底阈值调优参考）：
+响应（sources 按精排/RRF 得分排序，maxSimilarity 供兜底阈值调优参考；headingPath 为标题感知分块的章节路径，matchedTerms 为 BM25 命中词）：
 
 ```json
 {
@@ -193,7 +193,15 @@ curl -X POST http://localhost:8080/api/kb/1/search \
   "data": {
     "maxSimilarity": 0.83,
     "sources": [
-      { "docId": 1, "fileName": "员工手册.pdf", "chunkIndex": 12, "content": "第五章 休假制度…", "score": 0.92 }
+      {
+        "docId": 1,
+        "fileName": "员工手册.pdf",
+        "chunkIndex": 12,
+        "content": "第五章 休假制度…",
+        "score": 0.92,
+        "headingPath": "员工手册 > 第五章 休假制度 > 第十二条 年假",
+        "matchedTerms": ["年假", "休假"]
+      }
     ]
   }
 }

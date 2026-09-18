@@ -1,6 +1,6 @@
 # enterprise-RAG — 企业知识库 RAG 问答系统
 
-基于 SpringBoot 3 + LangChain4j + pgvector 的面试向企业知识库问答系统，覆盖 RAG 完整链路：**文档解析 → 语义分块 → 向量化入库 → 混合检索（向量 + BM25）→ Prompt 组装 → LLM 生成 → 溯源审计**，附带幻觉兜底与 RBAC 数据隔离。
+基于 SpringBoot 3 + LangChain4j + pgvector 的面试向企业知识库问答系统，覆盖 RAG 完整链路：**文档解析 → 标题感知两级分块（章节溯源）→ 父块摘要树 → 向量化入库 → 混合检索（摘要定范围 + 向量 + BM25 → RRF → 精排）→ Prompt 组装 → LLM 生成 → 溯源审计**，附带幻觉兜底与 RBAC 数据隔离。
 
 ## 目录
 
