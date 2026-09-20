@@ -41,6 +41,7 @@ public class QaService {
     private final QaLogService qaLogService;
     private final ConversationMapper conversationMapper;
     private final QaLogMapper qaLogMapper;
+    private final RateLimitService rateLimitService;
     private final ChatModel chatModel;
     private final StreamingChatModel streamingChatModel;
     private final ObjectMapper objectMapper;
@@ -55,6 +56,8 @@ public class QaService {
         long start = System.currentTimeMillis();
         // 知识库隔离校验
         knowledgeBaseService.requireAccess(kbId);
+        // 接口限流：/ask 每请求消耗 2~3 次 LLM 调用，防 key 被刷烧钱
+        rateLimitService.checkAsk(SecurityUtil.currentUser().id());
 
         // 【问答-0】多轮对话：解析会话（新会话建档；已存在会话校验归属并取最近几轮历史）
         Long convId = conversationId;
@@ -211,6 +214,7 @@ public class QaService {
     /** 仅检索（不调 LLM）：检索调试与评测脚本使用，不落问答日志 */
     public SearchResponse search(Long kbId, String question) {
         knowledgeBaseService.requireAccess(kbId);
+        rateLimitService.checkSearch(SecurityUtil.currentUser().id());
         RetrievalResult retrieval = retrievalService.retrieve(kbId, question);
         List<SourceVO> sources = retrieval.chunks().stream().map(this::toSource).toList();
         return new SearchResponse(retrieval.maxVectorSimilarity(), sources);

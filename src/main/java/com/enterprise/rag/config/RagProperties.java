@@ -24,6 +24,8 @@ public class RagProperties {
     private Rerank rerank = new Rerank();
     /** 父块摘要（RAPTOR 简化版摘要树） */
     private Summary summary = new Summary();
+    /** 接口限流 */
+    private RateLimit rateLimit = new RateLimit();
     /** 上传限制 */
     private Upload upload = new Upload();
     /** Prompt 模板，占位符 {context} {question} */
@@ -98,6 +100,16 @@ public class RagProperties {
         private Integer topN = 3;
         /** 单条摘要最大长度（字符） */
         private Integer maxChars = 60;
+    }
+
+    @Data
+    public static class RateLimit {
+        /** 是否启用限流 */
+        private Boolean enabled = true;
+        /** /ask 每分钟每用户上限（每次请求 2~3 次 LLM 调用，防 key 被刷烧钱） */
+        private Integer askPerMinute = 10;
+        /** /search 每分钟每用户上限 */
+        private Integer searchPerMinute = 30;
     }
 
     @Data

@@ -6,7 +6,7 @@
 
 ```bash
 mvn -q compile          # 编译（本机 Maven 已绑定 JDK17；PATH 默认 java 是 1.8，别用 java 命令验证）
-mvn test                # 20 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词），改检索逻辑必跑
+mvn test                # 21 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词/限流），改检索逻辑必跑
 mvn spring-boot:run     # 启动，先决条件见下
 python docs/eval/eval.py --token <JWT> --kb 1 --k 5   # 检索评测（Hit@5 报告）
 ```

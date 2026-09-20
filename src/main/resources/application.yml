@@ -92,6 +92,11 @@ rag:
     api-format: siliconflow   # 请求协议：siliconflow(顶层 query/documents) / dashscope(嵌套 input)
     top-n: 20                 # RRF 候选取前 N 条参与精排
     # base-url / api-key 缺省复用 rag.embedding 的配置
+  # 接口限流（用户级滑动窗口，防模型 API 被刷烧钱；分布式部署需换 Redis 计数器）
+  rate-limit:
+    enabled: true
+    ask-per-minute: 10        # /ask 每请求 2~3 次 LLM 调用
+    search-per-minute: 30
   # 上传限制
   upload:
     max-size-mb: 20

@@ -1,0 +1,28 @@
+{"question": "考试大纲适用于哪些专业的考生？", "docId": 18, "chunkIndex": 3}
+{"question": "考试的满分是多少？", "docId": 18, "chunkIndex": 9}
+{"question": "卷面考试时间多长？", "docId": 18, "chunkIndex": 8}
+{"question": "考试形式是什么？", "docId": 18, "chunkIndex": 7}
+{"question": "考试命题的基本原则是什么？", "docId": 18, "chunkIndex": 11}
+{"question": "最基本的知识占多大比例？", "docId": 18, "chunkIndex": 11}
+{"question": "控制结构要求掌握哪些内容？", "docId": 18, "chunkIndex": 15}
+{"question": "数组部分要求掌握什么？", "docId": 18, "chunkIndex": 16}
+{"question": "函数部分有什么要求？", "docId": 18, "chunkIndex": 17}
+{"question": "文件操作考什么？", "docId": 18, "chunkIndex": 19}
+{"question": "试题类型和分值比例？", "docId": 18, "chunkIndex": 21}
+{"question": "C 语言卷的参考教材是哪本？", "docId": 18, "chunkIndex": 23}
+{"question": "什么是缓存穿透？", "docId": 19, "chunkIndex": 2}
+{"question": "布隆过滤器是怎么解决缓存穿透的？", "docId": 19, "chunkIndex": 5}
+{"question": "布隆过滤器判断 key 不存在的原理是什么？", "docId": 19, "chunkIndex": 7}
+{"question": "什么是缓存击穿？", "docId": 19, "chunkIndex": 8}
+{"question": "缓存击穿的互斥锁方案怎么实现？", "docId": 19, "chunkIndex": 9}
+{"question": "什么是缓存雪崩？", "docId": 19, "chunkIndex": 13}
+{"question": "缓存雪崩和缓存击穿有什么区别？", "docId": 19, "chunkIndex": 15}
+{"question": "双写一致性要求强一致时用什么方案？", "docId": 19, "chunkIndex": 24}
+{"question": "Redis 持久化有哪两种方案？", "docId": 19, "chunkIndex": 25}
+{"question": "RDB 快照是怎么工作的？", "docId": 19, "chunkIndex": 26}
+{"question": "AOF 日志追加是怎么工作的？", "docId": 19, "chunkIndex": 27}
+{"question": "Redis 默认的淘汰策略是什么？", "docId": 19, "chunkIndex": 32}
+{"question": "Redisson 看门狗机制解决什么问题？", "docId": 19, "chunkIndex": 40}
+{"question": "Redis 为什么这么快？", "docId": 19, "chunkIndex": 63}
+{"question": "Redis 6.0 之后多线程用在哪里？", "docId": 19, "chunkIndex": 64}
+{"question": "主从复制的 replid 和 offset 是什么？", "docId": 19, "chunkIndex": 51}
