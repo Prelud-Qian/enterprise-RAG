@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS qa_log (
     id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
     user_id           BIGINT UNSIGNED NOT NULL COMMENT '提问用户 id',
     kb_id             BIGINT UNSIGNED NOT NULL COMMENT '知识库 id',
+    conversation_id   BIGINT UNSIGNED          DEFAULT NULL COMMENT '所属会话 id（多轮对话，单轮为空）',
     question          TEXT            NOT NULL COMMENT '用户提问',
     answer            TEXT            NOT NULL COMMENT '模型回答',
     sources           JSON                     DEFAULT NULL COMMENT '引用来源片段（docId/文件名/片段号/原文）',
@@ -68,8 +69,24 @@ CREATE TABLE IF NOT EXISTS qa_log (
     created_at        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '提问时间',
     PRIMARY KEY (id),
     KEY idx_user (user_id),
-    KEY idx_kb (kb_id)
+    KEY idx_kb (kb_id),
+    KEY idx_conversation (conversation_id)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='问答日志表';
+
+-- ---------------------------------------------------------------------
+-- 5. 会话表（多轮对话：同一会话的问答共享上下文）
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversation (
+    id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    kb_id      BIGINT UNSIGNED NOT NULL COMMENT '知识库 id',
+    user_id    BIGINT UNSIGNED NOT NULL COMMENT '会话归属用户',
+    created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    KEY idx_kb_user (kb_id, user_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='会话表（多轮对话）';
+
+-- 已建库升级：
+-- ALTER TABLE qa_log ADD COLUMN conversation_id BIGINT UNSIGNED DEFAULT NULL COMMENT '所属会话 id';
 
 -- ---------------------------------------------------------------------
 -- 初始化管理员：先注册普通用户，再执行下面语句提权

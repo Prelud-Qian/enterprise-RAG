@@ -30,12 +30,13 @@ public class QaLogService {
     private final ObjectMapper objectMapper;
     private final RagProperties props;
 
-    public void save(Long kbId, String question, String answer, List<SourceVO> sources,
+    public void save(Long kbId, Long conversationId, String question, String answer, List<SourceVO> sources,
                      String context, boolean fallback, long latencyMs) {
         try {
             QaLog qaLog = new QaLog();
             qaLog.setUserId(SecurityUtil.currentUser().id());
             qaLog.setKbId(kbId);
+            qaLog.setConversationId(conversationId);
             qaLog.setQuestion(question);
             qaLog.setAnswer(answer);
             qaLog.setSources(objectMapper.writeValueAsString(sources));

@@ -18,6 +18,8 @@ public class QaLog {
     private Long id;
     private Long userId;
     private Long kbId;
+    /** 所属会话 id（多轮对话，单轮为空） */
+    private Long conversationId;
     private String question;
     private String answer;
     /** 引用来源 JSON（SourceVO 数组） */

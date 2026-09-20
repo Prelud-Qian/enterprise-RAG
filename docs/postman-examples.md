@@ -144,6 +144,23 @@ curl -X DELETE http://localhost:8080/api/documents/1 \
 
 ## 4. 问答模块（RAG 检索链路 + 溯源 + 兜底）
 
+### 4.0 多轮对话（追问携带上下文）
+
+```bash
+# 第 1 轮：正常提问，响应里返回 conversationId
+curl -X POST http://localhost:8080/api/kb/1/ask \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {{token}}" \
+  -d '{"question":"员工年假有多少天？"}'
+# → data.conversationId = 5
+
+# 第 2 轮：带上 conversationId 追问，模型会结合历史理解指代
+curl -X POST http://localhost:8080/api/kb/1/ask \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {{token}}" \
+  -d '{"question":"它需要什么证明？","conversationId":5}'
+```
+
 ### 4.1 正常提问（命中知识 → 返回答案 + 引用来源）
 
 ```bash

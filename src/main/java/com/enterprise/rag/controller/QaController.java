@@ -34,7 +34,7 @@ public class QaController {
     /** 提问：返回回答 + 引用来源（溯源）+ 是否触发兜底 */
     @PostMapping("/{kbId}/ask")
     public Result<AskResponse> ask(@PathVariable Long kbId, @Valid @RequestBody AskRequest req) {
-        return Result.ok(qaService.ask(kbId, req.getQuestion()));
+        return Result.ok(qaService.ask(kbId, req.getQuestion(), req.getConversationId()));
     }
 
     /**

@@ -36,6 +36,8 @@ util/      SecurityUtil、JiebaUtil
      (子块文本+摘要文本一批,20/批+重试) → ④ 双表入库: VectorStoreDao(document_chunk) + SummaryDao(chunk_summary)
   → ⑤ bm25IndexService.rebuild(kbId)
 问答: QaService.ask / askStream(SSE)
+  ⓪ 多轮会话(可选): conversationId 非空时校验归属(user+kb,否则404)并取最近3轮历史注入 Prompt;
+     为空则新建 conversation 行并把 id 返回给客户端
   ① QueryRewriteService 多查询改写(失败降级原问题) → ② 摘要树检索: SummaryDao 搜摘要 Top3 定
      (doc_id,parent_index) 范围 → 范围内 VectorStoreDao 向量 Top10(摘要为空降级全库) + BM25 Top10(含命中词)
   → ③ RRF(k=60) 跨查询累积 → ④ RerankService gte-rerank 精排(失败降级 RRF 序)
@@ -54,6 +56,8 @@ util/      SecurityUtil、JiebaUtil
 6. **外部依赖必须降级**：QueryRewrite / Rerank / Embedding / Summary 任一步失败都不能让主链路 500 —— 降级路径：改写→原问题、精排→RRF 序、摘要→无摘要全库检索、兜底→固定话术
 7. **流式接口不走 Result 包装**：`/ask/stream` 返回 SseEmitter（message/sources/error 事件），统一异常处理管不到它，错误在 askStream 内部消化
 8. **异步上传**：`rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池
+9. **多轮会话归属**：conversation 校验必须同时满足 user_id=当前用户 AND kb_id=当前库（跨用户/跨库复用会话 id 要 404）；qa_log.conversation_id 为 NULL 表示单轮
+10. **可观测性**：`/actuator/health`、`/actuator/info` 公开；`/actuator/metrics` 仅 ADMIN。改动要过 mvn test 且 GitHub Actions CI 会自动跑
 
 ## 技术栈版本坑（锁版本的原因，别乱升级）
 
@@ -76,7 +80,8 @@ util/      SecurityUtil、JiebaUtil
 
 ## 实测基准（2026-09-07，VM 部署形态，改动前对照）
 
-- 检索评测 Hit@5=100%（4 文档/41 块（标题感知分块后）/30 标注，2026-09-18 新链路复测，平均相似度 0.712，docs/eval/）；全链路冒烟 8/8；模块六测全过；单元测试 20 个（含标题分块/摘要范围检索/命中词透传）
+- 检索评测 Hit@5=100%（4 文档/41 块（标题感知分块后）/30 标注，2026-09-18 新链路复测，平均相似度 0.712，docs/eval/）；**对比实验（2026-09-20）**：纯向量 90%/纯BM25 100%/无精排 100%/无改写 100%（基线 100%）；全链路冒烟 8/8；模块六测全过；单元测试 20 个
+- 多轮对话已实现（conversation 表 + 历史注入），纯指代追问实测通过（9095 端口验证）
 - 性能：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建），稳态 5~7s/问——延迟大头是 Query 改写 + Rerank 两次 LLM 调用，低延迟场景可关 `rag.retrieval.query-rewrite.enabled`
 - **压测基线（2026-09-20）**：接口层 `/auth/me` 并发 20 → 3225 QPS / p95 16ms；RAG 全链路 `/search` 并发 5 → QPS 0.8 / avg 6.2s / p99 27.3s（瓶颈=外部模型 API 排队，非服务自身）。压测脚本在临时目录 rag_bench.py，重压时对照此基线
 - 兜底阈值 `min-similarity: 0.4` 有数据支撑（命中样本相似度均 >0.54，可收紧到 0.5）

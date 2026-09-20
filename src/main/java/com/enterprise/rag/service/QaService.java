@@ -1,9 +1,16 @@
 package com.enterprise.rag.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.enterprise.rag.common.BusinessException;
 import com.enterprise.rag.config.RagProperties;
+import com.enterprise.rag.dao.mapper.ConversationMapper;
+import com.enterprise.rag.dao.mapper.QaLogMapper;
+import com.enterprise.rag.entity.Conversation;
+import com.enterprise.rag.entity.QaLog;
 import com.enterprise.rag.entity.vo.AskResponse;
 import com.enterprise.rag.entity.vo.SearchResponse;
 import com.enterprise.rag.entity.vo.SourceVO;
+import com.enterprise.rag.util.SecurityUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.SystemMessage;
@@ -32,6 +39,8 @@ public class QaService {
     private final KnowledgeBaseService knowledgeBaseService;
     private final RetrievalService retrievalService;
     private final QaLogService qaLogService;
+    private final ConversationMapper conversationMapper;
+    private final QaLogMapper qaLogMapper;
     private final ChatModel chatModel;
     private final StreamingChatModel streamingChatModel;
     private final ObjectMapper objectMapper;
@@ -39,11 +48,31 @@ public class QaService {
 
     /** 兜底固定话术：命中兜底时直接返回，不经过 LLM */
     private static final String FALLBACK_ANSWER = "没有找到相关资料，请换个问法或先上传相关文档。";
+    /** 多轮对话注入的历史轮数 */
+    private static final int HISTORY_ROUNDS = 3;
 
-    public AskResponse ask(Long kbId, String question) {
+    public AskResponse ask(Long kbId, String question, Long conversationId) {
         long start = System.currentTimeMillis();
         // 知识库隔离校验
         knowledgeBaseService.requireAccess(kbId);
+
+        // 【问答-0】多轮对话：解析会话（新会话建档；已存在会话校验归属并取最近几轮历史）
+        Long convId = conversationId;
+        String history = "";
+        if (convId != null) {
+            Conversation conv = conversationMapper.selectById(convId);
+            if (conv == null || !conv.getUserId().equals(SecurityUtil.currentUser().id())
+                    || !conv.getKbId().equals(kbId)) {
+                throw new BusinessException(404, "会话不存在或不属于当前知识库");
+            }
+            history = buildHistory(convId);
+        } else {
+            Conversation conv = new Conversation();
+            conv.setKbId(kbId);
+            conv.setUserId(SecurityUtil.currentUser().id());
+            conversationMapper.insert(conv);
+            convId = conv.getId();
+        }
 
         // 【问答-1】混合检索（向量 + BM25，RRF 融合）
         RetrievalResult retrieval = retrievalService.retrieve(kbId, question);
@@ -64,10 +93,11 @@ public class QaService {
             sources = List.of();
             context = "";
         } else {
-            // 【问答-3】Prompt 组装：检索片段注入模板
+            // 【问答-3】Prompt 组装：检索片段 + 对话历史注入模板
             context = buildContext(retrieval.chunks());
             String systemPrompt = props.getPromptTemplate()
                     .replace("{context}", context)
+                    .replace("{history}", history.isBlank() ? "（无）" : history)
                     .replace("{question}", question);
 
             // 【问答-4】LLM 调用（低温度 0.1 + Prompt 内强约束"不得编造"）
@@ -82,10 +112,29 @@ public class QaService {
             fallback = answer.contains("没有找到相关资料");
         }
 
-        // 【问答-5】审计落库：提问/回答/检索上下文/来源/耗时全量记录
+        // 【问答-5】审计落库：提问/回答/检索上下文/来源/耗时全量记录（挂到会话下）
         long latency = System.currentTimeMillis() - start;
-        qaLogService.save(kbId, question, answer, sources, context, fallback, latency);
-        return new AskResponse(answer, fallback, sources);
+        qaLogService.save(kbId, convId, question, answer, sources, context, fallback, latency);
+        return new AskResponse(answer, fallback, sources, convId);
+    }
+
+    /** 最近几轮问答历史拼接（时间序，每条截断防过长） */
+    private String buildHistory(Long conversationId) {
+        List<QaLog> recent = qaLogMapper.selectList(new LambdaQueryWrapper<QaLog>()
+                .eq(QaLog::getConversationId, conversationId)
+                .orderByDesc(QaLog::getCreatedAt)
+                .last("LIMIT " + HISTORY_ROUNDS * 2));
+        StringBuilder sb = new StringBuilder();
+        for (int i = recent.size() - 1; i >= 0; i--) {
+            QaLog item = recent.get(i);
+            sb.append("问：").append(truncateText(item.getQuestion(), 200)).append('\n');
+            sb.append("答：").append(truncateText(item.getAnswer(), 300)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private String truncateText(String s, int max) {
+        return s == null ? "" : (s.length() <= max ? s : s.substring(0, max));
     }
 
     /**
@@ -104,7 +153,7 @@ public class QaService {
                 || retrieval.maxVectorSimilarity() < props.getRetrieval().getMinSimilarity()) {
             sendEvent(emitter, "message", FALLBACK_ANSWER);
             sendEvent(emitter, "sources", "[]");
-            qaLogService.save(kbId, question, FALLBACK_ANSWER, List.of(), "",
+            qaLogService.save(kbId, null, question, FALLBACK_ANSWER, List.of(), "",
                     true, System.currentTimeMillis() - start);
             emitter.complete();
             return;
@@ -129,7 +178,7 @@ public class QaService {
                 String answer = response.aiMessage().text();
                 try {
                     sendEvent(emitter, "sources", objectMapper.writeValueAsString(sources));
-                    qaLogService.save(kbId, question, answer, sources, context,
+                    qaLogService.save(kbId, null, question, answer, sources, context,
                             answer.contains("没有找到相关资料"), System.currentTimeMillis() - start);
                 } catch (JsonProcessingException e) {
                     log.error("溯源信息序列化失败", e);
@@ -142,7 +191,7 @@ public class QaService {
             public void onError(Throwable error) {
                 log.error("流式回答失败", error);
                 sendEvent(emitter, "error", "回答生成失败: " + error.getMessage());
-                qaLogService.save(kbId, question, "", List.of(), context,
+                qaLogService.save(kbId, null, question, "", List.of(), context,
                         false, System.currentTimeMillis() - start);
                 emitter.complete();
             }

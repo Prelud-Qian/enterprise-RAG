@@ -27,6 +27,16 @@ mybatis-plus:
     db-config:
       id-type: auto
 
+# 可观测性：health/info 公开，metrics 需 ADMIN
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+
 # ============ 向量库 PostgreSQL + pgvector ============
 # 注意：使用自定义前缀 pgvector.* 手动装配，避开 Boot 主数据源自动配置
 pgvector:
@@ -95,7 +105,11 @@ rag:
     1. 回答内容必须来自参考资料，不得使用外部知识或凭空编造；
     2. 如果参考资料中不存在与问题相关的内容，必须只回答"没有找到相关资料"，禁止编造答案；
     3. 回答尽量分点、简洁、准确，使用中文；
-    4. 回答末尾注明引用的来源编号，例如"参考：【来源1】【来源3】"。
+    4. 回答末尾注明引用的来源编号，例如"参考：【来源1】【来源3】"；
+    5. 若【对话历史】中提到过相关内容，可结合上下文理解指代（如"它/这个/上面说的"）。
+
+    【对话历史】
+    {history}
 
     【参考资料】
     {context}

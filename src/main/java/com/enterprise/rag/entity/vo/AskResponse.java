@@ -19,4 +19,6 @@ public class AskResponse {
     @JsonProperty("isFallback")
     private boolean isFallback;
     private List<SourceVO> sources;
+    /** 会话 id（多轮对话：客户端用它在后续提问中携带上下文） */
+    private Long conversationId;
 }
