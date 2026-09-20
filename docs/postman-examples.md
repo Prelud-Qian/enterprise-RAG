@@ -22,7 +22,7 @@
 ```bash
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"123456"}'
+  -d '{"username":"admin","password":"admin123"}'
 ```
 
 响应：
@@ -36,7 +36,7 @@ curl -X POST http://localhost:8080/api/auth/register \
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"123456"}'
+  -d '{"username":"admin","password":"admin123"}'
 ```
 
 响应：
@@ -47,7 +47,7 @@ curl -X POST http://localhost:8080/api/auth/login \
   "message": "success",
   "data": {
     "token": "eyJhbGciOiJIUzI1NiJ9.xxx.xxx",
-    "user": { "id": 1, "username": "alice", "role": "USER", "enabled": 1, "createdAt": "2026-09-07 20:30:00" }
+    "user": { "id": 1, "username": "admin", "role": "USER", "enabled": 1, "createdAt": "2026-09-07 20:30:00" }
   }
 }
 ```
@@ -282,7 +282,7 @@ curl "http://localhost:8080/api/kb/1/qa-logs?page=1&size=10" \
 
 ## 5. RBAC 越权验证（面试演示用）
 
-用 **alice** 建的知识库，换 **bob** 的 token 去访问，应该拿到 403：
+用 **admin** 建的知识库，换 **bob** 的 token 去访问，应该拿到 403：
 
 ```bash
 # 1) 注册 bob 并登录拿到 bob 的 token
@@ -290,12 +290,12 @@ curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"bob","password":"123456"}'
 
-# 2) bob 访问 alice 的知识库 → 403 无权访问该知识库
+# 2) bob 访问 admin 的知识库 → 403 无权访问该知识库
 curl http://localhost:8080/api/kb/1 \
   -H "Authorization: Bearer {{bob_token}}"
 # → { "code": 403, "message": "无权访问该知识库", "data": null }
 
-# 3) bob 用 alice 的知识库提问 → 同样 403
+# 3) bob 用 admin 的知识库提问 → 同样 403
 curl -X POST http://localhost:8080/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{bob_token}}" \
@@ -312,11 +312,11 @@ curl http://localhost:8080/api/kb
 ## 6. ADMIN 提权与验证
 
 ```sql
--- MySQL 中执行，把 alice 提为管理员
-UPDATE sys_user SET role = 'ADMIN' WHERE username = 'alice';
+-- MySQL 中执行，把 admin 提为管理员
+UPDATE sys_user SET role = 'ADMIN' WHERE username = 'admin';
 ```
 
-重新登录 alice 后调 `/api/admin/users` 可拿到用户列表（ADMIN 也可以访问所有人的知识库）。
+重新登录 admin 后调 `/api/admin/users` 可拿到用户列表（ADMIN 也可以访问所有人的知识库）。
 
 ---
 

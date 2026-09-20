@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """评测语料生成 + 上传（可复现评测的第一步）：
 1. 生成 4 份仿真企业文档 docx（内容在 DOCS 常量里，修改后重跑即可换语料）
-2. 登录 alice/123456 → 新建知识库"评测语料库" → 上传全部文档
+2. 登录 admin/admin123 → 新建知识库"评测语料库" → 上传全部文档
 3. 输出 KB_ID 与 TOKEN，供 eval.py 使用
 
 用法: python generate_corpus.py --（先启动应用并确保账号存在）"""
@@ -130,7 +130,7 @@ DOCS = {
 }
 
 # 1. 登录
-_, r = http("POST", "/api/auth/login", {"username": "alice", "password": "123456"})
+_, r = http("POST", "/api/auth/login", {"username": "admin", "password": "admin123"})
 token = r["data"]["token"]
 
 # 2. 新建知识库

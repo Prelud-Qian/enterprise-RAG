@@ -163,7 +163,7 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 
 **⑥ 性能**：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建 + Query 改写），稳态 **5~7s/问**（Query 改写 + Rerank 两次 LLM 调用是延迟大头；低延迟场景可关 `rag.retrieval.query-rewrite.enabled` 或换更小模型）。
 
-**⑦ RBAC 与全局异常**（接口扫描 23/23 通过）：bob 对 alice 的知识库做检索/提问/文档/日志访问全部 **403**（`requireAccess` 在检索之前拦截，未进入检索阶段）；存储层 pgvector SQL 强制 `kb_id` 过滤（alice 检索结果 docId 全部属于她自己的库）；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
+**⑦ RBAC 与全局异常**（接口扫描 23/23 通过）：bob 对 admin 的知识库做检索/提问/文档/日志访问全部 **403**（`requireAccess` 在检索之前拦截，未进入检索阶段）；存储层 pgvector SQL 强制 `kb_id` 过滤（admin 检索结果 docId 全部属于她自己的库）；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
 
 **⑧ RAGFlow 三件套验证**（2026-09-18）：① 标题感知分块把 4 份语料从 8 块切到 **41 块**（每"条"独立成块），search 响应带章节路径（如"第三章 考勤与休假 > 第五条 …"）与 BM25 命中词；② chunk_summary 摘要表每父块一行（12/12 章节路径覆盖）；③ 新链路回归评测 **Hit@5 保持 100%**，平均相似度 0.654 → **0.712**（更细分块定位更准）。期间模型 API 6 次瞬时超时均被 LangChain4j 重试恢复，未影响任何请求。
 
@@ -228,13 +228,8 @@ docker compose up -d --build
 > - **模型**：硅基流动（`https://api.siliconflow.cn/v1`），LLM=deepseek-ai/DeepSeek-V3.2；embedding/rerank 需账户有余额
 
 ```bash
-# Windows 侧：指向 VM 后启动应用（8080/8081 若被占，用 SERVER_PORT 换端口）
-set MYSQL_HOST=192.168.88.130
-set MYSQL_PORT=3306
-set PG_HOST=192.168.88.130
-set PG_PORT=5432
-set DASHSCOPE_API_KEY=sk-xxx
-set SERVER_PORT=18888
+# Windows 侧：数据库地址与端口已写死在 application.yml（VM 192.168.88.130 / 9090），
+# 只需保证 API Key 已写入系统环境变量（一次性）：setx DASHSCOPE_API_KEY sk-xxx
 mvn spring-boot:run
 ```
 

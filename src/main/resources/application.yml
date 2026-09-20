@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 9090
 
 spring:
   application:
@@ -7,8 +7,8 @@ spring:
   # ============ 业务库 MySQL 8.0（用户/知识库/文档/问答日志） ============
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    # host/port 可用环境变量覆盖（如服务放在 VMware 虚拟机：MYSQL_HOST=192.168.88.129 MYSQL_PORT=3307）
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/enterprise_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    # 开发环境固定指向 enterprise-RAG VM（部署到其他环境时改这一行即可）
+    url: jdbc:mysql://192.168.88.130:3306/enterprise_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: ${MYSQL_PASSWORD:123456}
   servlet:
@@ -42,8 +42,8 @@ management:
 pgvector:
   datasource:
     driver-class-name: org.postgresql.Driver
-    # host/port 可用环境变量覆盖（PG_HOST / PG_PORT）
-    jdbc-url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/enterprise_rag
+    # 开发环境固定指向 enterprise-RAG VM
+    jdbc-url: jdbc:postgresql://192.168.88.130:5432/enterprise_rag
     username: postgres
     password: ${PG_PASSWORD:123456}
 

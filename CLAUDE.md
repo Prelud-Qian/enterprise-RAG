@@ -73,7 +73,7 @@ util/      SecurityUtil、JiebaUtil
 ## 配置与环境
 
 - `application.yml` 按 spring.datasource(MySQL) / pgvector.datasource / rag.* / jwt 分区；`rag.prompt-template` 占位符是 `{context}` `{question}`
-- 环境变量：`DASHSCOPE_API_KEY`（必填，**当前装的是硅基流动 key**，变量名沿用旧名）、`MYSQL_HOST/MYSQL_PORT/PG_HOST/PG_PORT`（切 VM 部署用）、`MYSQL_PASSWORD/PG_PASSWORD`、`SERVER_PORT`（8080/8081 常被本机其他 java 项目占用）
+- 环境变量：`DASHSCOPE_API_KEY`（必填，**已用 setx 写入用户环境变量**，新终端自动生效；值装的是硅基流动 key）。数据库地址/端口**已写死**在 application.yml（VM 192.168.88.130，MySQL 3306/PG 5432，应用端口 9090）——部署到新环境时改 yml；密码可经 MYSQL_PASSWORD/PG_PASSWORD 覆盖（默认 123456）
 - 模型默认走硅基流动 `https://api.siliconflow.cn/v1`：LLM=`deepseek-ai/DeepSeek-V3.2`（免费额度）、Embedding=`BAAI/bge-m3`、Rerank=`BAAI/bge-reranker-v2-m3` + `api-format: siliconflow`（siliconflow 与 dashscope 的 /rerank 请求协议不同，换百炼要同步改 api-format 为 dashscope）
 - 已知事实：embedding/rerank 需账户有余额（报 30001 就是没充值）；bge-m3 向量 1024 维，与 pgvector 表结构强绑定，换 embedding 模型必须同步改维度
 - **用户偏好**：第三方服务（MySQL/pgvector）放 VMware 虚拟机里的 Docker，不放 Windows 本机；mall-swarm VM(192.168.88.129) 已占用 3306，本项目的 mysql 容器用 3307。涉及部署/连库前先确认用户是否要现在部署

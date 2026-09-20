@@ -23,7 +23,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
-            "body": { "mode": "raw", "raw": "{\"username\": \"alice\", \"password\": \"123456\"}" }
+            "body": { "mode": "raw", "raw": "{\"username\": \"admin\", \"password\": \"admin123\"}" }
           },
           "event": [
             {
@@ -42,7 +42,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
-            "body": { "mode": "raw", "raw": "{\"username\": \"alice\", \"password\": \"123456\"}" }
+            "body": { "mode": "raw", "raw": "{\"username\": \"admin\", \"password\": \"admin123\"}" }
           },
           "event": [
             {

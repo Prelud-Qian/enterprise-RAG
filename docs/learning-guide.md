@@ -325,7 +325,7 @@ MySQL 存业务数据（用户/知识库/文档/日志），PG 存向量。**两
 ### RBAC 检索前过滤
 
 "不能检索完再过滤"——本项目两道防线：
-1. 服务层 `requireAccess`：非 owner 直接 403，**根本没进检索阶段**（bob 对 alice 的库 5 个接口全部 403 实测）
+1. 服务层 `requireAccess`：非 owner 直接 403，**根本没进检索阶段**（bob 对 admin 的库 5 个接口全部 403 实测）
 2. 存储层：所有 PG 检索 SQL 强制 `WHERE kb_id = ?`——即使服务层漏了，存储层也查不到别人的数据
 
 ### 降级设计清单（背下来，面试问"怎么保证可用性"直接背）
@@ -373,14 +373,10 @@ netstat -ano | findstr ":909"     # 列出 PID
 taskkill /F /PID <每个PID>
 ```
 
-**2. 启动应用**：
+**2. 启动应用**（数据库地址/端口已写死在 application.yml，只需 key 在环境变量里，一次性配置：`setx DASHSCOPE_API_KEY sk-xxx`）：
 
 ```bash
 cd D:\JavaProject\enterprise-RAG
-set MYSQL_HOST=192.168.88.130
-set PG_HOST=192.168.88.130
-set DASHSCOPE_API_KEY=你的硅基流动key
-set SERVER_PORT=9090
 mvn spring-boot:run
 ```
 
@@ -390,7 +386,7 @@ mvn spring-boot:run
 
 | 顺序 | 接口 | 看什么 |
 |---|---|---|
-| 1 | POST /api/auth/login（alice/123456） | 拿 token |
+| 1 | POST /api/auth/login（admin/admin123） | 拿 token |
 | 2 | POST /api/kb | 建知识库，记下 kbId |
 | 3 | POST /api/documents/upload（file+kbId） | 传自己的 PDF/Word，返回 chunkCount |
 | 4 | POST /api/kb/{id}/search | sources 的 headingPath / matchedTerms / score |
