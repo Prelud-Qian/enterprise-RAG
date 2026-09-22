@@ -55,6 +55,8 @@
 
 ## 第 2 天：Embedding 与向量检索（地基中的地基）
 
+> 📖 今天读：`service/EmbeddingService.java:29-73`（embed/embedBatch/维度校验/重试）、`dao/pg/VectorStoreDao.java:52-70`（searchByKb 的 `<=>` SQL）。IDE 里 Ctrl+G 输入行号直接跳。
+
 ### 概念（大白话）
 
 **Embedding（向量化）= 把一段文字压缩成 1024 个数字**（一个 1024 维向量）。
@@ -66,6 +68,7 @@
 2. 本项目用 BGE-M3 模型，1024 维是它输出的固定维度（存表、建索引都和这个维度强绑定）
 
 ### 代码导读
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 **`EmbeddingService`**（`service/EmbeddingService.java`）——模型 API 的封装：
 - `embed(String)`：单条向量化（问答时给用户问题用）
@@ -112,6 +115,8 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 3 天：分块（Chunking）
 
+> 📖 今天读：`service/ChunkingService.java` 的 `43-75`（入口方法）、**`103-142`（buildBase 主循环，重点）**、`144-168`（标题判断/路径栈）、`181-227`（overlap/硬切/路径去重）。
+
 ### 概念（大白话）
 
 一篇 2 万字的文档没法整体检索——把"和问题相关的那一小段"从一大坨里找出来，是向量检索的核心矛盾。所以先**切块**：
@@ -130,6 +135,7 @@ WHERE a.id < b.id LIMIT 1;
 实测数据（面试可直接引用）：分块从 8 块变 41 块后，检索平均相似度 0.654 → 0.712。
 
 ### 代码导读（`ChunkingService`，全项目最好读的类）
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 按方法逐个看：
 
@@ -160,6 +166,8 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 4 天：BM25 与倒排索引（本项目的面试分水岭）
 
+> 📖 今天读：`service/Bm25IndexService.java` 的 `48-92`（search 打分）、`94-108`（build 建索引）、`110-114`（KbIndex 结构）；`util/JiebaUtil.java` 全文（分词口径统一）。
+
 ### 概念（大白话）
 
 **BM25 = 关键词检索的经典算法**：看"查询词在文档里出现了多少次、出现在什么样的文档里"来打分。核心是**倒排索引**——像词典：
@@ -177,6 +185,7 @@ WHERE a.id < b.id LIMIT 1;
 3. **IDF（逆文档频率）**：几乎所有块都有的词（"公司""员工"）区分度低，权重低；稀有的词（"十三薪"）权重高
 
 ### 代码导读（`Bm25IndexService`）
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 - `KbIndex`：一个知识库一份索引快照 = `docs`（块列表）+ `postings`（词 → 块id→词频）+ `docLen`（每块长度）+ `avgDocLen`（平均长度）
 - `build(kbId)`：从 PG 加载全部块 → jieba 分词 → 构建 postings。**索引懒加载**：第一次搜索时才构建，文档增删后 `rebuild()` 整份重建（简单可靠，>10 万块才需要演进为增量索引）
@@ -202,6 +211,8 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 5 天：混合检索与 RRF
 
+> 📖 今天读：`service/RetrievalService.java` 的 **`44-132`（retrieve 主流程，重点）**、`134-149`（父块展开）；`service/QueryRewriteService.java:42-71`（改写）。
+
 ### 概念（大白话）
 
 两种检索各有盲区，必须合体：
@@ -224,6 +235,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 实测（面试数据）：纯向量 Hit@5=90%，混合检索 100%——**3 道题只有关键词路能命中，混合的价值是实测出来的**。
 
 ### 代码导读（`RetrievalService.retrieve`，逐段走读）
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 1. `queryRewriteService.rewrite(query)`：让 LLM 把口语问题改写成多个检索查询（"怎么涨工资"→"调薪制度"），**每个查询独立召回、RRF 跨查询累积**。失败降级为原问题
 2. 每个查询循环内：
@@ -244,6 +256,8 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 ## 第 6 天：精排（Rerank）与摘要树
 
+> 📖 今天读：`service/RerankService.java:48-110`、`service/SummaryService.java:32-50`、`dao/pg/SummaryDao.java:39-57`、`dao/pg/VectorStoreDao.java:72-95`（范围内检索 SQL）。
+
 ### 概念（大白话）
 
 **两阶段检索 = 海选 + 决赛**：
@@ -259,6 +273,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 3. 子块检索只在该范围内进行——相当于先翻目录再精读
 
 ### 代码导读
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 - `RerankService.callRerankApi`：POST /rerank，注意 `api-format` 配置——硅基流动（顶层 query/documents）和百炼（嵌套 input）协议不同，本项目做了双协议兼容。换模型服务商只需改 yml
 - `SummaryService.summarize`：入库时给每个父块生成一句话摘要，单块失败置 null（跳过，不影响主流程）
@@ -277,6 +292,8 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 ## 第 7 天：幻觉兜底与 Prompt
 
+> 📖 今天读：`service/QaService.java` 的 **`55-123`（ask 主流程，重点）**、`125-137`（会话历史）、`229-239`（上下文拼接）。
+
 ### 概念（大白话）
 
 **幻觉的根源**：模型被训练成"必须给答案"，没有依据时它不会说"我不知道"，而是编。
@@ -290,6 +307,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 **证明兜底没过 LLM 的证据**（面试可用）：兜底答案与固定话术**一字不差**——如果经过 LLM，措辞不可能逐字相同。
 
 ### 代码导读（`QaService.ask` 完整走读——第 0 天之后的第二个重点类）
+> 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
 1. `requireAccess(kbId)`：权限（第 8 天）
 2. `rateLimitService.checkAsk`：限流（防 key 被刷烧钱）
@@ -312,6 +330,8 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 ---
 
 ## 第 8 天：工程细节（RAG 之外，Java 后端面试必问）
+
+> 📖 今天读：`service/DocumentService.java:131-224`（入库主流程+失败补偿）、`service/KnowledgeBaseService.java:75-85`（requireAccess 隔离）、`service/RateLimitService.java:34-49`（限流窗口）。
 
 ### 双数据源为什么没有事务（本项目最精彩的工程决策）
 
@@ -444,3 +464,154 @@ python eval.py --token <登录拿的JWT> --kb <你的知识库id> --k 5
 | 18 | 瓶颈在哪 | 外部模型 API 排队（压测数据） |
 | 19 | 参数怎么定的 | 30 条标注集评测，单变量对比实验 |
 | 20 | 为什么 Java 不用 Python | 面试岗位栈；手写全链路是稀缺差异点 |
+
+---
+
+## 附录：四个核心类逐行走读（真代码版）
+
+> 使用方法：IDE 里打开对应文件（`Ctrl+点击` 类名可跳转），对照下面的代码块一行行看。
+> 目标：读完能解释每一行的"为什么"。四个类读完 = 面试底线达成。
+
+### A. ChunkingService（`service/ChunkingService.java`）——分块
+
+**主循环 `buildBase()`**（约第 103 行），这是全项目最值得逐行读的方法：
+
+```java
+for (String s : sentences) {
+    boolean headingLine = isHeadingLine(s);
+    if (first && treatFirstAsTitle && !headingLine && s.length() <= chunkSize) {
+        // 文档首句视作标题（level 0），写入路径根；超长首句按正文处理
+        flushBase(current, base, comps, currentStartsHeading);
+        current = new StringBuilder(s);
+        currentStartsHeading = true;
+        comps[0] = s;              // 路径栈第 0 层 = 文档标题
+        comps[1] = null; comps[2] = null;
+    } else if (headingLine) {
+        flushBase(current, base, comps, currentStartsHeading);   // 标题前的内容先收口成块
+        current = new StringBuilder(s);                           // 标题自己开新块
+        currentStartsHeading = true;
+        updatePath(comps, s);                                     // 更新章节路径栈
+    } else if (s.length() > chunkSize) {
+        flushBase(current, base, comps, currentStartsHeading);
+        for (String part : hardSplit(s, chunkSize)) {             // 超长句硬切兜底
+            base.add(new BaseChunk(part, currentPath(comps), false));
+        }
+    } else if (current.length() + s.length() > chunkSize) {
+        flushBase(current, base, comps, currentStartsHeading);   // 装不下了 → 收口
+        current = new StringBuilder(s);                           // 新句子开新块
+    } else {
+        current.append(s);                                        // 贪心追加
+    }
+    first = false;
+}
+```
+
+**逐行讲**：
+- `isHeadingLine(s)`：正则判断"第X章/第X条/一、/1."开头且整行 ≤42 字（太长就不是标题）
+- 每个分支第一个动作几乎都是 `flushBase`——"把手里攒的句子收口成一个块"。块的一生：攒 → 收口 → 入 list
+- `comps` 是三层路径栈（标题/章/条）：`updatePath` 同级覆盖、下级清空——所以块 5 的路径是"第三章 考勤与休假"，块 6 进了第五条就变成"第三章 > 第五条"
+- `currentStartsHeading` 标记本块是否以标题开头——后面 `applyOverlap` 用它决定**跳过 overlap**（防止上一块尾巴污染标题）
+
+**自测**：不看代码，画出"第一条 员工入职满一年后，每年享有五天带薪年假。"这句经过 buildBase 时的完整分支路径。
+
+### B. Bm25IndexService（`service/Bm25IndexService.java`）——倒排索引与 BM25
+
+**索引构建 `build()`**（后半段）：
+
+```java
+for (int i = 0; i < chunks.size(); i++) {
+    for (String term : JiebaUtil.tokenize(chunks.get(i).content())) {   // 每块先分词
+        postings.computeIfAbsent(term, t -> new HashMap<>())            // term → (块号 → 词频)
+                .merge(i, 1, Integer::sum);
+    }
+    docLen[i] = chunks.get(i).content().length();                       // 每块长度
+    totalLen += docLen[i];
+}
+double avgDocLen = chunks.isEmpty() ? 1 : (double) totalLen / chunks.size();
+```
+
+**逐行讲**：
+- `postings` 就是倒排索引：`"年假" → {块12: 2次, 块30: 1次}`。查询时直接从"年假"这个词的入口取候选块，**不用扫全库**
+- `docLen/avgDocLen` 是为 BM25 的长度归一化准备的——长块天然词多，不能让它占便宜
+
+**打分循环 `search()`**（核心三行）：
+
+```java
+int df = postings.size();                                  // 文档频率：多少块含这个词
+double idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));    // 稀有词权重高，烂大街的词权重低
+scores[i] += idf * (tf * (K1 + 1)) /
+             (tf + K1 * (1 - B + B * dl / avgDocLen));     // BM25 打分公式
+```
+
+**逐行讲**：
+- `df` 大（"公司"每个块都有）→ 括号里 (N-df) 小 → idf 接近 0 → 这个词几乎不加分
+- 第三行分子 `tf*(K1+1)` 和分母里的 `tf` 相互抵消一部分——**tf 越大分数增长越慢**（词频饱和，k1=1.5 控制饱和速度）
+- `B * dl / avgDocLen`：块比平均长时分母变大、分数变小——**长度归一化**（b=0.75 控制惩罚力度）
+
+**自测**：口述"查询『年假政策』时，BM25 从收到分词到输出 TopK 的完整步骤"。
+
+### C. RetrievalService（`service/RetrievalService.java`）——混合检索编排
+
+**摘要树 + RRF 融合段**（retrieve 方法中部）：
+
+```java
+// 摘要树检索：先搜父块摘要定范围，子块向量检索只在该范围内执行
+if (props.getSummary().getEnabled()) {
+    List<SummaryHit> summaryHits = summaryDao.searchByKb(kbId, queryVector, topN);
+    if (!summaryHits.isEmpty()) {
+        List<Scope> scopes = summaryHits.stream()
+                .map(h -> new Scope(h.docId(), h.parentIndex())).distinct().toList();
+        vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK(), scopes);
+    } else {
+        vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK());  // 降级全库
+    }
+}
+
+// RRF：两类得分量纲不同不可直接相加，按排名融合
+for (int i = 0; i < vectorHits.size(); i++) {
+    RetrievedChunk chunk = merged.computeIfAbsent(new ChunkKey(docId, chunkIndex), ...);
+    chunk.addScore(1.0 / (rrfK + i + 1));       // 向量路第 i 名 → 1/(60+i+1)
+}
+for (int i = 0; i < bm25Hits.size(); i++) {
+    ... addScore(1.0 / (rrfK + i + 1));         // BM25 路同样按排名加分，可跨查询累积
+}
+```
+
+**逐行讲**：
+- `computeIfAbsent`：同一个块可能被向量路和 BM25 路都命中——两路的分要**加到同一个对象上**，所以用 (docId, chunkIndex) 当 key 去重合并
+- RRF 的分数只跟排名有关：第 1 名 1/61≈0.0164，第 3 名 1/63≈0.0159——**量纲统一，两路平等对话**
+- 多查询改写场景：每个改写查询都跑一遍这个循环，同一块的分数**跨查询累积**——这就是"多查询 RRF"
+
+**自测**：说明"为什么不能用 0.8×向量分 + 0.2×BM25分"这种加权（答案在第 5 天概念节）。
+
+### D. QaService（`service/QaService.java`）——问答编排与兜底
+
+**兜底判定 + Prompt 组装段**（ask 方法中部）：
+
+```java
+if (retrieval.isEmpty()
+        || retrieval.maxVectorSimilarity() < props.getRetrieval().getMinSimilarity()) {
+    // 检索质量不达标 → 固定话术，根本不调 LLM（从源头掐断编造）
+    fallback = true;
+    answer = FALLBACK_ANSWER;    // "没有找到相关资料，请换个问法或先上传相关文档。"
+    sources = List.of();
+} else {
+    context = buildContext(retrieval.chunks());    // [来源1]《文件名》第x段：...
+    String systemPrompt = props.getPromptTemplate()
+            .replace("{context}", context)
+            .replace("{history}", history.isBlank() ? "（无）" : history)
+            .replace("{question}", question);
+    ChatResponse response = chatModel.chat(ChatRequest.builder()
+            .messages(SystemMessage.from(systemPrompt), UserMessage.from(question)).build());
+    answer = response.aiMessage().text();
+}
+qaLogService.save(kbId, convId, question, answer, sources, context, fallback, latency);
+```
+
+**逐行讲**：
+- `maxVectorSimilarity < 0.4`：阈值来自评测数据（命中样本相似度都 >0.54）。这个 if 是**防幻觉的核心**——不过关的请求连 LLM 的门都进不去
+- `replace("{context}", ...)`：模板占位符替换，`{context}` 装检索片段、`{history}` 装多轮历史、`{question}` 装用户问题——替换完的 systemPrompt 就是发给模型的完整指令
+- `messages(SystemMessage, UserMessage)`：SystemMessage = 规则（模型当背景服从），UserMessage = 问题（模型针对回答）
+- 最后一行：无论兜底还是正常，**都落 qa_log**——审计不挑路径
+
+**自测**：解释"兜底答案为什么能和固定话术一字不差"（答案：因为压根没经过 LLM，字符串直接返回的）。

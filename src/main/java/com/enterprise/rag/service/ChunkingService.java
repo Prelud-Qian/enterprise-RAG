@@ -48,14 +48,27 @@ public class ChunkingService {
 
     /** 两级分块（small-to-big），标题感知版本，供 DocumentService 入库使用；
      *  parentSize <= childSize 时退化为单级（parent=null、parentIndex=0） */
+    /**
+     * 将原始文本先切成大块（父块），再把每个父块切成小块（子块）。子块用于向量检索，父块用于提供上下文。
+     * @param text          待分块的原始文本
+     * @param childSize     子块的目标大小
+     * @param childOverlap  子块之间的重叠大小
+     * @param parentSize    父块的目标大小
+     * @return
+     */
     public List<StructuredChunk> chunkStructured(String text, int childSize, int childOverlap, int parentSize) {
+        // 父块大小 ≤ 子块大小时，两级分块没有意义（父块不会比子块大），退化为单级分块。
         if (parentSize <= childSize) {
             return applyOverlap(buildBase(splitSentences(text), childSize, true), childOverlap).stream()
                     .map(b -> new StructuredChunk(b.text(), null, b.path(), 0))
                     .toList();
         }
+        // 构建父块列表
         List<BaseChunk> parents = buildBase(splitSentences(text), parentSize, true);
+        // 初始化结果容器
+        // result：存放最终的子块列表。
         List<StructuredChunk> result = new ArrayList<>();
+        // parentIndex：父块索引，从 0 开始，遍历时递增。
         int parentIndex = 0;
         for (BaseChunk parent : parents) {
             parentIndex++;
@@ -73,6 +86,14 @@ public class ChunkingService {
         return result;
     }
 
+    /**
+     * 为什么要同时有子块和父块：子块小，向量聚焦，检索精度高；父块大，内容完整，上下文充足。
+     * 检索时用子块匹配，返回时用父块提供上下文，两者兼顾，解决了“小块检索准但上下文不足、大块上下文全但检索不准”的矛盾。
+     *
+     * 为什么要有路径：路径记录块在文档中的位置（如“第一章 > 第三条”），
+     * 用于来源追溯、过滤排序、上下文补全，同时给大模型提供语义线索，帮助更准确地理解和回答。
+     */
+
     /** 旧两级分块接口（无路径），保留给现有测试 */
     public List<ChunkPair> chunkWithParents(String text, int childSize, int childOverlap, int parentSize) {
         return chunkStructured(text, childSize, childOverlap, parentSize).stream()
@@ -86,6 +107,11 @@ public class ChunkingService {
     private record BaseChunk(String text, String path, boolean startsWithHeading) {
     }
 
+    /**
+     * 把一段原始文本做规范化处理后，按标点切分成"句子"列表，并过滤掉空白片段。
+     * @param text
+     * @return
+     */
     private List<String> splitSentences(String text) {
         String normalized = text == null ? "" : text.replace("\r\n", "\n").replaceAll("\\n{3,}", "\n\n").trim();
         if (normalized.isEmpty()) {
@@ -99,16 +125,43 @@ public class ChunkingService {
 
     /**
      * 标题感知贪心合并：标题句强制开新块；路径栈记录 标题(0)/章(1)/条(2) 三级
+     * 把句子列表按 chunkSize 合并成块，同时识别标题、维护标题路径，并在必要时进行硬切分。
+     */
+    /**
+     * sentences	        List<String>	    已切分的句子列表
+     * chunkSize	        int	                每个块的目标大小
+     * treatFirstAsTitle	boolean	            是否把文档首句视作标题
+     * @param sentences
+     * @param chunkSize
+     * @param treatFirstAsTitle
+     * @return
      */
     private List<BaseChunk> buildBase(List<String> sentences, int chunkSize, boolean treatFirstAsTitle) {
+        // 存放已完成的块
         List<BaseChunk> base = new ArrayList<>();
+        // 当前正在构建的块文本
         StringBuilder current = new StringBuilder();
+        // 当前块是否以标题开头
         boolean currentStartsHeading = false;
+        // 标题路径的三个层级（如 chapter > section > subsection）
+        // chapter（章）
+        //  └── section（节）
+        //        └── subsection（小节）
         String[] comps = new String[3];
+        // 是否是第一个句子
         boolean first = true;
 
+        // 遍历每个句子 s
         for (String s : sentences) {
+            // 判断这个句子是否是标题行
             boolean headingLine = isHeadingLine(s);
+            // first：是第一个句子。
+            // treatFirstAsTitle：调用方要求把首句视作标题。
+            // !headingLine：首句本身不是标题行（否则走分支 2）。
+            // s.length() <= chunkSize：首句长度不超过 chunkSize（超长首句按正文处理）
+            /**
+             * 首句视作标题
+             */
             if (first && treatFirstAsTitle && !headingLine && s.length() <= chunkSize) {
                 // 文档首句视作标题（level 0），写入路径根；超长首句按正文处理（硬切优先）
                 flushBase(current, base, comps, currentStartsHeading);
@@ -117,17 +170,26 @@ public class ChunkingService {
                 comps[0] = s;
                 comps[1] = null;
                 comps[2] = null;
+            /**
+             * 遇到标题行
+             */
             } else if (headingLine) {
                 flushBase(current, base, comps, currentStartsHeading);
                 current = new StringBuilder(s);
                 currentStartsHeading = true;
                 updatePath(comps, s);
+            /**
+             * 超长句子
+             */
             } else if (s.length() > chunkSize) {
                 flushBase(current, base, comps, currentStartsHeading);
                 for (String part : hardSplit(s, chunkSize)) {
                     base.add(new BaseChunk(part, currentPath(comps), false));
                 }
                 currentStartsHeading = false;
+            /**
+             * 当前块已满
+             */
             } else if (current.length() + s.length() > chunkSize) {
                 flushBase(current, base, comps, currentStartsHeading);
                 current = new StringBuilder(s);
@@ -141,6 +203,14 @@ public class ChunkingService {
         return base;
     }
 
+    /**
+     * 把当前 StringBuilder 缓冲区里累积的文本"定型"成一个 BaseChunk 输出，然后清空缓冲区，准备攒下一段。
+     * 它是一个缓冲区冲刷器（flusher） —— 分块过程中的辅助工具方法。
+     * @param sb    正在累积的文本缓冲区，攒够一段就"冲"出去
+     * @param out   输出列表，冲出来的分块往这里加
+     * @param comps 章节层级数组（chapter/section/subsection 等），用于拼路径
+     * @param startsHeading 这一块是否以标题开头
+     */
     private void flushBase(StringBuilder sb, List<BaseChunk> out, String[] comps, boolean startsHeading) {
         if (!sb.isEmpty()) {
             out.add(new BaseChunk(sb.toString().trim(), currentPath(comps), startsHeading));

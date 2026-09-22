@@ -22,12 +22,21 @@ import java.util.function.Supplier;
 @Slf4j
 public class EmbeddingService {
 
-    private final EmbeddingModel embeddingModel;
-    private final RagProperties props;
+    private final EmbeddingModel embeddingModel; // 实际执行向量化的模型对象
+    private final RagProperties props; // 读取项目配置
 
     /** 单条文本向量化（问答时对用户问题使用） */
     public float[] embed(String text) {
+        /**
+         * TextSegment.from()：将字符串包装成 LangChain4j 的 TextSegment 对象。
+         * embeddingModel.embed(...)：调用模型，返回 Response<Embedding>。
+         * withRetry(...)：包装调用，提供重试机制。
+         */
         Response<Embedding> response = withRetry(() -> embeddingModel.embed(TextSegment.from(text)));
+        /**
+         * response.content().vector()：从响应中提取 float[] 数组。
+         * checkDimension(...)：校验数组长度是否符合配置。
+         */
         return checkDimension(response.content().vector());
     }
 
