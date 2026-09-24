@@ -15,6 +15,29 @@ import java.util.regex.Pattern;
  * 3. 相邻块 overlap 保留跨块语义；标题开头的块跳过 overlap，防止上一块尾巴污染标题
  * 4. 两级分块（small-to-big）：父块 2000 边界同样受标题约束
  */
+
+/**
+ * splitSentences 先做规范化、并按 。！？；换行 把全文切成句子列表；chunkStructured 拿到句子列表开始编排
+ * ——第一遍把整篇喂给合并器 buildBase（size=2000）拼出父块，
+ * 第二遍逐个把父块文本重新喂回同一个 buildBase（size=500）切出子块（若 parentSize ≤ childSize 则跳过两级、直接单级返回）；
+ * buildBase 内部逐句贪心累加，每句先经 isHeadingLine/headingLevel 判断是不是标题，是标题就 updatePath 更新三层路径栈并强制开新块，
+ * 单句超长则交给 hardSplit 定长硬切，攒到装不下就调 flushBase 把缓冲区收口成块并清空；每个父块的子块切完后，
+ * 立刻由 applyOverlap 给其中的非标题块开头拼上上一块结尾的 50 字；
+ * 最后由 currentPath/dedupePath 把父子路径拼接去重，输出 StructuredChunk(子块文本, 父块文本, 章节路径, 父块序号) 列表。
+ */
+
+/**
+ * 1. `splitSentences(text)`：用正则 `(?<=[。！？；\n])` 把文本切成句子列表（保留句末标点）
+ * 2. `buildBase(sentences, chunkSize, treatFirstAsTitle)`：核心循环，逐句处理三种情况
+ *    - **是标题** → 当前块收口，标题开新块（标题永远是新块的起点）
+ *    - **单句超长** → 硬切成多个 chunkSize 大小的块
+ *    - **正常句子** → 贪心往当前块里追加，超 chunkSize 就收口开新块
+ * 3. `isHeadingLine / headingLevel / updatePath`：标题识别与**章节路径**维护
+ *    - 路径是个三级栈：标题(0) / 章(1) / 条(2)，同级覆盖、下级清空
+ *    - 产物就是溯源里的 `headingPath`："员工手册 > 第三章 考勤与休假 > 第五条"
+ * 4. `applyOverlap`：下一块开头拼上一块结尾 50 字；**标题开头的块跳过 overlap**（防止上一块尾巴污染标题）
+ * 5. `chunkStructured`：两级编排——先按 parentSize 切父块，再在每个父块里切子块；子块路径与父块路径合并去重
+ */
 @Service
 public class ChunkingService {
 

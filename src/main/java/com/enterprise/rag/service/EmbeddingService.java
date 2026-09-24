@@ -17,6 +17,19 @@ import java.util.function.Supplier;
  * 向量化服务：文本 → BGE-M3 向量（1024 维）
  * 带简单重试（模型 API 偶发限流/网络抖动），并校验返回维度防止配错模型
  */
+
+/**
+ * 纯字符串先由 TextSegment.from 包装成 LangChain4j 的 TextSegment，
+ * 再交给 withRetry 包裹的模型调用——单条文本走 embed（问答时把用户问题向量化），
+ * 多条走 embedBatch（入库时上层按 batch-size=20 分批传入，内部用 embedAll 一次请求多条，减少 API 往返）；
+ * withRetry 是唯一的失败处理入口，捕获异常后最多重试 2 次、退避 1s/2s（1000L << attempt），
+ * 但 BusinessException 直接向上抛不重试（配置类错误重试没意义），重试耗尽后包成 500 抛出；
+ * 模型返回的 Response<Embedding> 经 .content().vector() 取出 float[]，
+ * 再由 checkDimension 校验长度是否等于配置的 1024 维——不等就抛 500，
+ * 防的是"换 embedding 模型忘改配置"导致错误维度的向量静默写进 pgvector、从此所有检索都是错的；
+ * 校验通过后输出 float[]（单条）或 List<float[]>（批量），交回调用方去入库或检索，
+ * 其间 sleep 只负责阻塞等待，捕获 InterruptedException 时恢复线程中断标志。
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j

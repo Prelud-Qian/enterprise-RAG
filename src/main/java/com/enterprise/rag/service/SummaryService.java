@@ -37,6 +37,9 @@ public class SummaryService {
         List<String> result = new ArrayList<>(parentContents.size());
         for (String content : parentContents) {
             try {
+                /**
+                 * 父块摘要完全由大模型生成
+                 */
                 ChatResponse resp = chatModel.chat(ChatRequest.builder()
                         .messages(SystemMessage.from(String.format(SUMMARY_PROMPT, s.getMaxChars(), content)))
                         .build());

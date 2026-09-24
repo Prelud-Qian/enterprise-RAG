@@ -474,7 +474,38 @@ python eval.py --token <登录拿的JWT> --kb <你的知识库id> --k 5
 
 ### A. ChunkingService（`service/ChunkingService.java`）——分块
 
-**主循环 `buildBase()`**（约第 103 行），这是全项目最值得逐行读的方法：
+**先搞清父子块是怎么来的：同一个方法跑两遍**（`chunkStructured()`，第 59 行）
+
+```java
+// 第一遍：整篇文本 → 父块（size=2000）
+List<BaseChunk> parents = buildBase(splitSentences(text), parentSize, true);
+// 第二遍：每个父块内部 → 子块（size=500）
+for (BaseChunk parent : parents) {
+    buildBase(splitSentences(parent.text()), childSize, false);   // 同一个方法，只换了 size
+}
+```
+
+> **关键认知：父子块不是两套算法，是同一个合并器跑了两遍。**
+> `buildBase` 可以当成一台机器——喂进「句子列表 + size」，吐出「块列表」；换个 size 再喂一次，就有了两级。
+> 子块通过 `parent` 字段直接引用父块全文，`parentIndex` 标记它属于第几个父块（1 起）。
+> 退化规则：`parentSize <= childSize` 时两级没意义（父块不会比子块大），直接走单级（`parent=null`、`parentIndex=0`）。
+
+**方法清单**（13 个方法，按调用顺序排）
+
+| 方法 | 做什么 |
+|---|---|
+| `splitSentences` | 文本按 `。！？；换行` 切成句子列表，去空去杂 |
+| `buildBase` | **合并器**：逐句贪心累加成块（≤size），途中认标题、维护路径栈、超长句硬切 |
+| `flushBase` | 收口：把当前攒的句子定型成一个块，清空缓冲区 |
+| `hardSplit` | 单句本身就超 size（无标点长段落）→ 按 size 定长切断兜底 |
+| `applyOverlap` | 给非标题块的开头复制上一块结尾 50 字 |
+| `isHeadingLine` / `headingLevel` | 判断这行是不是标题、属于哪级（章=1 / 条=2） |
+| `updatePath` / `currentPath` / `dedupePath` | 维护三层路径栈 → 拼成 `"第三章 考勤 > 第五条"` |
+| `chunkStructured` | **编排**：跑两遍 buildBase + 拼父子路径 + 输出 `StructuredChunk` |
+
+一个块的"一生"：**切句 → 攒(append) → 满了收口(flushBase) → 加 overlap → 入 list**
+
+**主循环 `buildBase()`**（第 139 行），这是全项目最值得逐行读的方法：
 
 ```java
 for (String s : sentences) {
@@ -511,6 +542,19 @@ for (String s : sentences) {
 - 每个分支第一个动作几乎都是 `flushBase`——"把手里攒的句子收口成一个块"。块的一生：攒 → 收口 → 入 list
 - `comps` 是三层路径栈（标题/章/条）：`updatePath` 同级覆盖、下级清空——所以块 5 的路径是"第三章 考勤与休假"，块 6 进了第五条就变成"第三章 > 第五条"
 - `currentStartsHeading` 标记本块是否以标题开头——后面 `applyOverlap` 用它决定**跳过 overlap**（防止上一块尾巴污染标题）
+
+**overlap 是怎么加的**（`applyOverlap()`，第 274 行，切完块之后的独立后处理）
+
+```java
+// 本块新文本 = 上一块结尾 50 字 + 本块原文
+String part = prev.substring(Math.max(0, prev.length() - overlap)) + b.text();
+```
+
+**逐行讲**：
+- 生效条件是 `i > 0 && overlap > 0 && !b.startsWithHeading()`——**标题块跳过**，因为标题是天然语义边界，前面再接 50 字反而串味；第一个块也没得拼
+- **只在父块内部做**（第 77 行）：每个父块单独切子块、单独加 overlap，不跨父块——否则会把上一章的内容带进下一章
+- 为什么不干脆把块切大点？因为边界切断的是**语义**：一句话被切成两半后，命中词分散在两个块里，两边都拿不到完整语义。重叠一段，跨界语义在相邻块里都能完整出现
+- 代价：块实际长度会**超过 size**（500 + 50 = 550）；overlap 段按字符位置硬切，可能从半句话开始
 
 **自测**：不看代码，画出"第一条 员工入职满一年后，每年享有五天带薪年假。"这句经过 buildBase 时的完整分支路径。
 
