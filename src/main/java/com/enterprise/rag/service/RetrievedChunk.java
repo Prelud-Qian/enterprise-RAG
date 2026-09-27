@@ -17,8 +17,6 @@ public class RetrievedChunk {
     private String fileName;
     /** RRF 融合得分 */
     private double score;
-    /** 向量余弦相似度（仅向量召回命中的片段有值，兜底阈值判断用） */
-    private Double vectorSimilarity;
     /** 父级块原文（small-to-big：命中子块后展开为父块喂给 LLM，可空） */
     private String parentContent;
     /** 章节路径（标题感知分块：如"员工手册 > 第三章 考勤与休假 > 第五条"） */

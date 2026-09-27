@@ -46,21 +46,25 @@ public class RerankService {
      * 候选为空/未启用/调用失败时，保持 RRF 原顺序截断
      */
     public List<RetrievedChunk> rerank(String query, List<RetrievedChunk> candidates, int finalTopK) {
-        RagProperties.Rerank r = props.getRerank();
-        if (!r.getEnabled() || candidates.size() <= 1) {
-            return candidates.stream().limit(finalTopK).toList();
+        RagProperties.Rerank r = props.getRerank(); // 取 rerank 配置
+        if (!r.getEnabled() || candidates.size() <= 1) {   // 没启用 或 候选≤1
+            return candidates.stream().limit(finalTopK).toList(); // 直接截前 finalTopK 条返回
         }
         try {
+            // 取每个候选的 content，组成字符串列表
             List<String> documents = candidates.stream().map(RetrievedChunk::getContent).toList();
+            // 把 query 和 documents 发给 API，拿回一组 hit
             List<RerankHit> hits = callRerankApi(query, documents);
             // 用精排得分替换 RRF 得分（精排分对用户展示相关性更有意义）
+            // 用 hit 里的 index 定位候选，把它的 score 改成 hit 里的分数
             for (RerankHit hit : hits) {
                 candidates.get(hit.index()).setScore(hit.score());
             }
-            return candidates.stream()
+            return candidates.stream() // 遍历候选
+                    // 按 score 降序排
                     .sorted(Comparator.comparingDouble(RetrievedChunk::getScore).reversed())
-                    .limit(finalTopK)
-                    .toList();
+                    .limit(finalTopK) // 取前 finalTopK 条
+                    .toList(); // 收集成 List 返回
         } catch (Exception e) {
             log.warn("Rerank 调用失败，降级为 RRF 排序: {}", e.getMessage());
             return candidates.stream().limit(finalTopK).toList();
@@ -68,6 +72,9 @@ public class RerankService {
     }
 
     /** POST {baseUrl}/rerank，兼容两种协议：DashScope(嵌套 input) 与 SiliconFlow(顶层 query/documents) */
+    /**
+     * 精排（Rerank）的底层 HTTP 调用方法 ：把 query + 一组候选文档发给远程 Rerank 服务（如硅基流动 / 通用 Rerank API），拿回每条文档的相关性分数。
+     */
     private List<RerankHit> callRerankApi(String query, List<String> documents) throws Exception {
         RagProperties.Rerank r = props.getRerank();
         String baseUrl = StringUtils.hasText(r.getBaseUrl())
