@@ -231,7 +231,7 @@ public class RetrievalService {
             //如果没有父块（null）→ 用 " child:docId:chunkIndex" 拼一个唯一标识作为 key。
             String key = c.getParentContent() != null
                     ? c.getParentContent()
-                    : " child:" + c.getDocId() + ":" + c.getChunkIndex();
+                    : "\0child:" + c.getDocId() + ":" + c.getChunkIndex();
             /**
              * 为什么用父块内容当 key？
              * 因为同一个父块切出的多个子块，它们的 parentContent 是完全相同的字符串。
