@@ -649,13 +649,13 @@ if (retrieval.isEmpty()
             .messages(SystemMessage.from(systemPrompt), UserMessage.from(question)).build());
     answer = response.aiMessage().text();
 }
-qaLogService.save(kbId, convId, question, answer, sources, context, fallback, latency);
+qaLogService.save(userId, kbId, convId, question, answer, sources, context, fallback, latency);
 ```
 
 **逐行讲**：
 - `maxVectorSimilarity < 0.4`：阈值来自评测数据（命中样本相似度都 >0.54）。这个 if 是**防幻觉的核心**——不过关的请求连 LLM 的门都进不去
 - `replace("{context}", ...)`：模板占位符替换，`{context}` 装检索片段、`{history}` 装多轮历史、`{question}` 装用户问题——替换完的 systemPrompt 就是发给模型的完整指令
 - `messages(SystemMessage, UserMessage)`：SystemMessage = 规则（模型当背景服从），UserMessage = 问题（模型针对回答）
-- 最后一行：无论兜底还是正常，**都落 qa_log**——审计不挑路径
+- 最后一行：`userId` 由 `ask` 在请求线程取好传入，不在 `QaLogService` 里现调 `SecurityUtil.currentUser()`——SSE 回调跑在模型客户端的线程池上，那里没有 SecurityContext，现取会抛 401；无论兜底还是正常，**都落 qa_log**——审计不挑路径
 
 **自测**：解释"兜底答案为什么能和固定话术一字不差"（答案：因为压根没经过 LLM，字符串直接返回的）。

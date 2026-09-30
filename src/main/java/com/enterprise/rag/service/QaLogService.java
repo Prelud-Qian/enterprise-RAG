@@ -8,7 +8,6 @@ import com.enterprise.rag.entity.QaLog;
 import com.enterprise.rag.entity.vo.PageVO;
 import com.enterprise.rag.entity.vo.QaLogVO;
 import com.enterprise.rag.entity.vo.SourceVO;
-import com.enterprise.rag.util.SecurityUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -30,11 +29,15 @@ public class QaLogService {
     private final ObjectMapper objectMapper;
     private final RagProperties props;
 
-    public void save(Long kbId, Long conversationId, String question, String answer, List<SourceVO> sources,
-                     String context, boolean fallback, long latencyMs) {
+    /**
+     * userId 由调用方传入，不在此处取 SecurityUtil —— SSE 回调运行在 langchain4j 线程池上，
+     * 那里没有 SecurityContext ThreadLocal，现取会抛 401。
+     */
+    public void save(Long userId, Long kbId, Long conversationId, String question, String answer,
+                     List<SourceVO> sources, String context, boolean fallback, long latencyMs) {
         try {
             QaLog qaLog = new QaLog();
-            qaLog.setUserId(SecurityUtil.currentUser().id());
+            qaLog.setUserId(userId);
             qaLog.setKbId(kbId);
             qaLog.setConversationId(conversationId);
             qaLog.setQuestion(question);

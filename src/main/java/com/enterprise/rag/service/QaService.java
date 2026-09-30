@@ -11,7 +11,6 @@ import com.enterprise.rag.entity.vo.AskResponse;
 import com.enterprise.rag.entity.vo.SearchResponse;
 import com.enterprise.rag.entity.vo.SourceVO;
 import com.enterprise.rag.util.SecurityUtil;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -34,6 +33,10 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Slf4j
+/**
+ * QaService 的作用是：接收用户的问题，去知识库里找相关资料，把资料和问题组装成提示词（Prompt），
+ * 调用大模型（LLM）生成回答，并把这次问答记录存进数据库。
+ */
 public class QaService {
 
     private final KnowledgeBaseService knowledgeBaseService;
@@ -53,6 +56,7 @@ public class QaService {
     private static final int HISTORY_ROUNDS = 3;
 
     public AskResponse ask(Long kbId, String question, Long conversationId) {
+        // 记开始时间，最后算耗时
         long start = System.currentTimeMillis();
         // 知识库隔离校验
         knowledgeBaseService.requireAccess(kbId);
@@ -62,18 +66,30 @@ public class QaService {
         // 【问答-0】多轮对话：解析会话（新会话建档；已存在会话校验归属并取最近几轮历史）
         Long convId = conversationId;
         String history = "";
-        if (convId != null) {
-            Conversation conv = conversationMapper.selectById(convId);
+        /**
+         * 查会话，是为了确认身份、绑定知识库、维护聊天列表；
+         * 查最近问答，是为了给大模型注入“短期记忆”，让它能听懂“那”、“它”、“这个”等指代词，实现连贯的多轮对话。
+         */
+        if (convId != null) {   // 传了会话 id
+            Conversation conv = conversationMapper.selectById(convId);  // 查会话
+            /**
+             * 如果满足以下任意一种情况，就认为这个请求是不合法的
+             *
+             * 根据传入的 conversationId 没有查找到对应的会话记录
+             * 查出来的这个会话，它的归属用户 ID 不等于 当前发起请求的用户 ID
+             * 这个会话原本绑定的知识库 ID 不等于 当前请求想要查询的知识库 ID
+             */
             if (conv == null || !conv.getUserId().equals(SecurityUtil.currentUser().id())
                     || !conv.getKbId().equals(kbId)) {
                 throw new BusinessException(404, "会话不存在或不属于当前知识库");
             }
+            // 查最近几轮问答拼成文本
             history = buildHistory(convId);
-        } else {
-            Conversation conv = new Conversation();
+        } else {  // 没传会话 id
+            Conversation conv = new Conversation(); // 新建会话对象
             conv.setKbId(kbId);
             conv.setUserId(SecurityUtil.currentUser().id());
-            conversationMapper.insert(conv);
+            conversationMapper.insert(conv);    // 插入数据库
             convId = conv.getId();
         }
 
@@ -85,7 +101,7 @@ public class QaService {
         List<SourceVO> sources;
         String context;
 
-        // 【问答-2】幻觉兜底：检索质量不达标（无召回 / 最佳向量相似度低于阈值）
+        // 【问答-2】幻觉兜底：检索出来的资料质量不达标（无召回 / 最佳向量相似度低于阈值）
         // 直接返回固定话术、不调 LLM —— 从根上禁止模型编造
         if (retrieval.isEmpty()
                 || retrieval.maxVectorSimilarity() < props.getRetrieval().getMinSimilarity()) {
@@ -117,16 +133,20 @@ public class QaService {
 
         // 【问答-5】审计落库：提问/回答/检索上下文/来源/耗时全量记录（挂到会话下）
         long latency = System.currentTimeMillis() - start;
-        qaLogService.save(kbId, convId, question, answer, sources, context, fallback, latency);
+        qaLogService.save(SecurityUtil.currentUser().id(), kbId, convId, question, answer,
+                sources, context, fallback, latency);
         return new AskResponse(answer, fallback, sources, convId);
     }
 
     /** 最近几轮问答历史拼接（时间序，每条截断防过长） */
+    /**
+     * 去数据库里捞出这个会话最近的几轮问答记录，把它们拼成一段纯文本，作为“历史记忆”喂给大模型。
+     */
     private String buildHistory(Long conversationId) {
         List<QaLog> recent = qaLogMapper.selectList(new LambdaQueryWrapper<QaLog>()
-                .eq(QaLog::getConversationId, conversationId)
-                .orderByDesc(QaLog::getCreatedAt)
-                .last("LIMIT " + HISTORY_ROUNDS * 2));
+                .eq(QaLog::getConversationId, conversationId) // 只查这个会话的记录
+                .orderByDesc(QaLog::getCreatedAt)   // 按时间倒序（最新的在前）
+                .last("LIMIT " + HISTORY_ROUNDS * 2)); // 只取最近 N 条
         StringBuilder sb = new StringBuilder();
         for (int i = recent.size() - 1; i >= 0; i--) {
             QaLog item = recent.get(i);
@@ -136,6 +156,9 @@ public class QaService {
         return sb.toString();
     }
 
+    /**
+     * 字符串截断：太长就切掉超出部分
+     */
     private String truncateText(String s, int max) {
         return s == null ? "" : (s.length() <= max ? s : s.substring(0, max));
     }
@@ -146,9 +169,14 @@ public class QaService {
      * 兜底场景推送一条 message + 空 sources，不调 LLM。
      * 流式接口无法走统一 Result 包装，异常通过 error 事件返回。
      */
+
+    // 和 ask 走同一条链路（检索 → 兜底 → 组装 prompt → 调 LLM → 溯源 → 审计），区别只有一个：答案边生成边推送，不等全部生成完。
     public void askStream(Long kbId, String question, SseEmitter emitter) {
         long start = System.currentTimeMillis();
         knowledgeBaseService.requireAccess(kbId);
+        // 限流与 userId 都必须在请求线程取：SSE 回调跑在 langchain4j 的线程池上，那里读不到 SecurityContext
+        Long userId = SecurityUtil.currentUser().id();
+        rateLimitService.checkAsk(userId);
         RetrievalResult retrieval = retrievalService.retrieve(kbId, question);
 
         // 幻觉兜底：与同步接口同一判定逻辑
@@ -156,7 +184,7 @@ public class QaService {
                 || retrieval.maxVectorSimilarity() < props.getRetrieval().getMinSimilarity()) {
             sendEvent(emitter, "message", FALLBACK_ANSWER);
             sendEvent(emitter, "sources", "[]");
-            qaLogService.save(kbId, null, question, FALLBACK_ANSWER, List.of(), "",
+            qaLogService.save(userId, kbId, null, question, FALLBACK_ANSWER, List.of(), "",
                     true, System.currentTimeMillis() - start);
             emitter.complete();
             return;
@@ -165,40 +193,56 @@ public class QaService {
         String context = buildContext(retrieval.chunks());
         String systemPrompt = props.getPromptTemplate()
                 .replace("{context}", context)
+                // 流式接口暂无多轮会话入口，历史恒为空，但占位符仍要替换，否则发的是字面量 {history}
+                .replace("{history}", "（无）")
                 .replace("{question}", question);
         List<SourceVO> sources = retrieval.chunks().stream().map(this::toSource).toList();
 
         streamingChatModel.chat(ChatRequest.builder()
                 .messages(SystemMessage.from(systemPrompt), UserMessage.from(question))
                 .build(), new StreamingChatResponseHandler() {
+            /**
+             * 触发时机：大模型每生成一个 token（一个词或一个字），就会调用一次这个方法。
+             * 效果：前端收到后立即渲染，用户看到的就是一个字一个字往外蹦的打字机效果。
+             */
             @Override
             public void onPartialResponse(String partial) {
                 sendEvent(emitter, "message", partial);
             }
 
+            /**
+             * 触发时机：大模型全部生成完毕。
+             * 从完整响应里提取出最终的完整答案文本。注意，虽然前面已经逐字推送过了，但这里拿到的是完整的、拼接好的答案，用于落库审计。
+            */
             @Override
             public void onCompleteResponse(ChatResponse response) {
                 String answer = response.aiMessage().text();
                 try {
                     sendEvent(emitter, "sources", objectMapper.writeValueAsString(sources));
-                    qaLogService.save(kbId, null, question, answer, sources, context,
+                    qaLogService.save(userId, kbId, null, question, answer, sources, context,
                             answer.contains("没有找到相关资料"), System.currentTimeMillis() - start);
-                } catch (JsonProcessingException e) {
-                    log.error("溯源信息序列化失败", e);
+                } catch (Exception e) {
+                    // 异常不能穿出回调：langchain4j 会转成 onError，而 emitter 已 complete
+                    log.error("流式问答落库/溯源失败", e);
                 } finally {
                     emitter.complete();
                 }
             }
 
+            /**
+             * 触发时机：大模型调用过程中发生异常（比如 API 超时、网络中断、余额不足等）。
+             * 目的：留下失败记录，方便日后统计失败率、排查问题。
+             */
             @Override
             public void onError(Throwable error) {
                 log.error("流式回答失败", error);
                 sendEvent(emitter, "error", "回答生成失败: " + error.getMessage());
-                qaLogService.save(kbId, null, question, "", List.of(), context,
+                qaLogService.save(userId, kbId, null, question, "", List.of(), context,
                         false, System.currentTimeMillis() - start);
                 emitter.complete();
             }
         });
+        // 给这个 emitter 设置一个规则：如果它超时了，就自动执行关闭操作。
         emitter.onTimeout(emitter::complete);
     }
 
@@ -225,7 +269,10 @@ public class QaService {
                 c.getContent(), c.getScore(), c.getHeadingPath(), c.getMatchedTerms());
     }
 
-    /** 上下文拼接：给来源片段编号，方便模型在回答中引用【来源n】 */
+    /** 上下文拼接：给来源片段编号，方便模型在回答中引用【来源】 */
+    /**
+     * 把系统检索到的零散文档碎片，拼成一段排版整齐的文字，准备喂给大模型。
+     */
     private String buildContext(List<RetrievedChunk> chunks) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < chunks.size(); i++) {

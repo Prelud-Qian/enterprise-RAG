@@ -265,7 +265,7 @@ mvn spring-boot:run
 | GET | /api/documents?kbId= | 文档分页列表 |
 | DELETE | /api/documents/{id} | 删除文档（级联向量+重建索引） |
 | POST | /api/kb/{kbId}/ask | 提问 → 回答 + 引用来源 + 兜底标记；body 传 `conversationId` 启用多轮对话（带最近 3 轮历史上下文，响应返回会话 id） |
-| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 逐 token 返回） |
+| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 逐 token 返回）；与 /ask 共用 10/min 限流配额，超限返回 429 |
 | POST | /api/kb/{kbId}/search | 仅检索不生成（调试/评测用） |
 | GET | /api/kb/{kbId}/qa-logs | 问答日志分页（审计） |
 | GET | /api/admin/users | 用户列表（仅 ADMIN，RBAC 验证） |

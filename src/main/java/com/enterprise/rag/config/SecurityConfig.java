@@ -2,6 +2,7 @@ package com.enterprise.rag.config;
 
 import com.enterprise.rag.common.Result;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -43,6 +44,9 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // ASYNC/ERROR 是容器回派（SseEmitter 完成后触发），JwtAuthFilter 不处理异步派发，
+                        // 不放行会因取不到 SecurityContext 而抛 AccessDenied，此时响应已提交只能刷日志
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/**", "/error").permitAll()
                         // Swagger 文档放行
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
