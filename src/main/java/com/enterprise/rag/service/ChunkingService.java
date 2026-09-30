@@ -91,7 +91,7 @@ public class ChunkingService {
         // 初始化结果容器
         // result：存放最终的子块列表。
         List<StructuredChunk> result = new ArrayList<>();
-        // parentIndex：父块索引，从 0 开始，遍历时递增。
+        // parentIndex：父块索引，从 1 开始，遍历时递增。
         int parentIndex = 0;
         for (BaseChunk parent : parents) {
             parentIndex++;
