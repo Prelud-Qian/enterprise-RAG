@@ -6,7 +6,7 @@
 
 ```bash
 mvn -q compile          # 编译（本机 Maven 已绑定 JDK17；PATH 默认 java 是 1.8，别用 java 命令验证）
-mvn test                # 28 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词/限流/知识库路由），改检索逻辑必跑
+mvn test                # 32 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词/限流/知识库路由/流式错误通道），改检索逻辑必跑
 mvn spring-boot:run     # 启动，先决条件见下
 python docs/eval/eval.py --token <JWT> --kb 1 --k 5   # 检索评测（Hit@5 报告）
 ```
@@ -45,7 +45,7 @@ util/      SecurityUtil、JiebaUtil
   → ③ RRF(k=60) 跨查询累积 → ④ RerankService gte-rerank 精排(失败降级 RRF 序)
   → ⑤ 父级块展开(small-to-big: 子块换父块文本,同父块去重留高分;保留 headingPath/matchedTerms)
   → ⑥ 兜底判定(maxSimilarity<0.4 不调 LLM) → ⑦ Prompt 注入 [来源n]《文件》第x段
-  → ⑧ LLM(DeepSeek-V3.2, temp 0.1) → ⑨ QaLogService 审计落库
+  → ⑧ LLM(DeepSeek-V3.2, temp 0.1; 流式：首个 token 前连接断开则自动重试一次) → ⑨ QaLogService 审计落库
 ```
 
 ## 关键不变量（改代码前必读）
@@ -56,7 +56,7 @@ util/      SecurityUtil、JiebaUtil
 4. **small-to-big 数据形态**：document_chunk 的 content=子块（检索/向量化对象），parent_content=父块（喂 LLM 用，可空）；heading_path=章节路径、parent_index=父块序号（0=单级模式）；`chunk.parent-size<=size` 时退化为单级分块。老库升级 SQL 见 sql/pgvector_schema.sql 注释
 5. **chunk_summary 与 document_chunk 同生命周期**：文档删除/失败补偿/知识库删除必须同时删两张表（summaryDao.deleteByDocId/deleteByKbId），否则摘要树检索会命中已删文档
 6. **外部依赖必须降级**：QueryRewrite / Rerank / Embedding / Summary 任一步失败都不能让主链路 500 —— 降级路径：改写→原问题、精排→RRF 序、摘要→无摘要全库检索、兜底→固定话术
-7. **流式接口有两条错误通道**：`/ask/stream` 的 SseEmitter（message/sources/error 事件）只兜成功路径和 LLM 调用中的异常；`requireAccess`/`checkAsk`/参数校验是**同步**抛出，照走 GlobalExceptionHandler 返回 JSON —— 所以异常响应必须显式 `contentType(application/json)`，`produces=text/event-stream` 协商不出 JSON 时会退化成 500 空响应体
+7. **流式接口有两条错误通道**：`/ask/stream` 的 SseEmitter（message/sources/error 事件）只兜成功路径和 LLM 调用中的异常；`requireAccess`/`checkAsk`/会话解析/路由/检索等步骤都在首个事件**之前**同步完成（此时响应未提交），异常照走 GlobalExceptionHandler 返回 JSON —— 所以异常响应必须显式 `contentType(application/json)`，`produces=text/event-stream` 协商不出 JSON 时会退化成 500 空响应体
 8. **异步线程拿不到请求线程的上下文**：① `rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池。② SSE 回调（onCompleteResponse/onError）跑在 langchain4j 的 ForkJoinPool 线程上，SecurityContext ThreadLocal 为空 —— userId 必须在请求线程取好传进 `qaLogService.save`，不能在回调里现调 `SecurityUtil.currentUser()`
 9. **ASYNC/ERROR 派发必须放行**：SseEmitter 完成后容器会做 ASYNC 回派，`JwtAuthFilter` 是 OncePerRequestFilter（默认跳过异步派发），而 Spring Security 6 的 AuthorizationFilter 默认过滤所有 dispatcher type → SecurityConfig 里要 `dispatcherTypeMatchers(ASYNC, ERROR).permitAll()`，否则每次流式请求刷 AccessDeniedException；限流配额 `/ask` 与 `/ask/stream` 共用（10/min）
 10. **多轮会话归属**：conversation 校验必须同时满足 user_id=当前用户 AND kb_id=当前库（跨用户/跨库复用会话 id 要 404）；qa_log.conversation_id 为 NULL 表示单轮；统一会话 kb_id=NULL（只校验 user_id），旧按库接口遇 NULL 会话返回 404

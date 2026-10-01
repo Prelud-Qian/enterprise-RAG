@@ -2,10 +2,6 @@
 
 基于 SpringBoot 3 + LangChain4j + pgvector 的面试向企业知识库问答系统，覆盖 RAG 完整链路：**文档解析 → 标题感知两级分块（章节溯源）→ 父块摘要树 → 向量化入库 → 混合检索（摘要定范围 + 向量 + BM25 → RRF → 精排）→ Prompt 组装 → LLM 生成 → 溯源审计**，附带幻觉兜底与 RBAC 数据隔离。
 
-## 学习指南
-
-> 零基础入门这份代码库：[docs/learning-guide.md](docs/learning-guide.md) —— 10 天路线，每天 = 大白话概念 → 代码逐方法导读 → 动手实验 → 面试问答，附执行手册与 20 题速查表。
-
 ## 项目背景（业务叙事）
 
 企业内部制度文档（员工手册、报销制度、考核办法、信息安全规范等）数量多、更新频繁，传统方式靠 OA 附件 + 人肉搜索，查一条制度要翻十几份文件。本项目把制度文档向量化入库，员工用自然语言提问即可获得**带出处溯源的答案**——检索链路全自研（BM25 / 向量 / 精排 / 摘要树），答案可定位到具体章节条款，检索不到时明确拒绝回答（防幻觉）。技术上以展示 RAG 全链路为目的，业务上可直接作为企业知识库问答底座。
@@ -267,9 +263,9 @@ mvn spring-boot:run
 | GET | /api/documents?kbId= | 文档分页列表 |
 | DELETE | /api/documents/{id} | 删除文档（级联向量+重建索引） |
 | POST | /api/ask | **统一提问**：不指定知识库，后端 LLM 自动路由到最相关的库（≤3 个）融合检索；失败/无匹配降级全部库；body/响应同 /api/kb/{kbId}/ask（来源含 kbName） |
-| POST | /api/ask/stream | **统一流式提问**（SSE）：事件序与 /api/kb/{kbId}/ask/stream 一致；与 /ask 系列共用 10/min 限流 |
+| POST | /api/ask/stream | **统一流式提问**（SSE）：事件序与 /api/kb/{kbId}/ask/stream 一致；首个 token 前连接断开自动重试一次；与 /ask 系列共用 10/min 限流 |
 | POST | /api/kb/{kbId}/ask | 提问 → 回答 + 引用来源 + 兜底标记；body 传 `conversationId` 启用多轮对话（带最近 3 轮历史上下文，响应返回会话 id） |
-| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 事件序：`meta` 会话 id → `message` 逐 token → `sources` 溯源 JSON）；与 /ask 共用 10/min 限流配额，超限返回 429 |
+| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 事件序：`meta` 会话 id → `message` 逐 token → `sources` 溯源 JSON）；首个 token 前连接断开自动重试一次；与 /ask 共用 10/min 限流配额，超限返回 429 |
 | POST | /api/kb/{kbId}/search | 仅检索不生成（调试/评测用） |
 | GET | /api/kb/{kbId}/qa-logs | 问答日志分页（审计） |
 | GET | /api/admin/users | 用户列表（仅 ADMIN，RBAC 验证） |
