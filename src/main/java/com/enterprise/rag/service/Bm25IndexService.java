@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -54,6 +55,16 @@ public class Bm25IndexService {
         indexes.remove(kbId);
     }
 
+    /** BM25 跨库检索：各库内存索引分别打分，合并后按分数降序截断 topK（进入 RRF 只按名次，跨库分数不完全可比可接受） */
+    public synchronized List<Bm25Hit> search(Collection<Long> kbIds, String query, int topK) {
+        List<Bm25Hit> merged = new ArrayList<>();
+        for (Long kbId : kbIds) {
+            merged.addAll(searchOne(kbId, query, topK));
+        }
+        merged.sort(Comparator.comparingDouble(Bm25Hit::score).reversed());
+        return merged.size() <= topK ? merged : List.copyOf(merged.subList(0, topK));
+    }
+
     /** BM25 检索：返回 TopK 命中（score 越大越相关），并记录每块的命中词（高亮/可解释性） */
     /**
      * 拿索引 → 分词 → 逐个词给块加分 → 取分数最高的 topK 个块
@@ -78,7 +89,7 @@ public class Bm25IndexService {
      * 内层 key	    块下标
      * 内层 value	词频
      */
-    public synchronized List<Bm25Hit> search(Long kbId, String query, int topK) {
+    private List<Bm25Hit> searchOne(Long kbId, String query, int topK) {
         // 拿索引
         // 从内存缓存里取这个知识库的倒排索引；如果还没有，就把这个库的所有块从数据库捞出来现建一份存进去；已经有的话直接返回，一次数据库都不查。
         KbIndex index = indexes.computeIfAbsent(kbId, this::build);
@@ -166,7 +177,7 @@ public class Bm25IndexService {
             }
             ChunkRef ref = index.docs().get(i); // 用下标拿到块的正排信息
             // 把第 i 个块封装成一个 Bm25Hit 对象，然后放进优先队列（小顶堆）
-            pq.offer(new Bm25Hit(ref.docId(), ref.chunkIndex(), ref.content(), scores[i],
+            pq.offer(new Bm25Hit(kbId, ref.docId(), ref.chunkIndex(), ref.content(), scores[i],
                     ref.parentContent(), ref.headingPath(), matchedTerms.getOrDefault(i, List.of())));
             // 维护堆大小不超过 topK
             if (pq.size() > topK) {

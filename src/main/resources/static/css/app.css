@@ -1,0 +1,387 @@
+/* 企业知识库问答 —— 自定义样式（Element Plus 之外的部分） */
+
+:root {
+  --brand: #2f5fd0;
+  --header-bg: #1f2b3e;
+  --aside-bg: #f6f7f9;
+  --border: #e4e7ed;
+  --text-sub: #8a94a6;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  color: #303133;
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 首屏 loading */
+.boot {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-sub);
+  font-size: 14px;
+}
+
+/* ==================== 登录页 ==================== */
+
+.login-page {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1f2b3e 0%, #2f5fd0 100%);
+}
+
+.login-card {
+  width: 380px;
+  padding: 32px 36px 36px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .22);
+}
+
+.login-title {
+  margin: 0 0 4px;
+  font-size: 21px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.login-sub {
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--text-sub);
+  text-align: center;
+}
+
+.login-btn { width: 100%; margin-top: 4px; }
+
+/* ==================== 主框架 ==================== */
+
+.layout { height: 100%; }
+.layout-body { height: calc(100% - 56px); }
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--header-bg);
+  color: #fff;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: .5px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.header-right .username { color: #d5dae3; }
+.header-right .el-button { color: #d5dae3; }
+.header-right .el-button:hover { color: #fff; }
+
+.app-aside {
+  background: var(--aside-bg);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.app-main {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 只把 el-tabs 当纯切换头用，内容区自己管 */
+.main-tabs { padding: 0 20px; flex: 0 0 auto; }
+.main-tabs .el-tabs__header { margin-bottom: 0; }
+.main-tabs .el-tabs__content { display: none; }
+
+.main-body { flex: 1 1 auto; min-height: 0; }
+
+/* ==================== 知识库侧栏 ==================== */
+
+.kb-panel { height: 100%; display: flex; flex-direction: column; }
+
+.kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.kb-head-title { font-size: 13px; font-weight: 600; color: var(--text-sub); }
+
+.kb-list { flex: 1 1 auto; overflow-y: auto; padding: 0 8px 12px; }
+
+.kb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-bottom: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.kb-item:hover { background: #e9ecf2; }
+.kb-item.active { background: #e2eafb; }
+
+.kb-item-icon { color: var(--brand); flex: 0 0 auto; }
+
+.kb-item-main { flex: 1 1 auto; min-width: 0; }
+
+.kb-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-item.active .kb-item-name { color: var(--brand); }
+
+.kb-item-desc {
+  font-size: 12px;
+  color: var(--text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-item-del {
+  flex: 0 0 auto;
+  color: var(--text-sub);
+  opacity: 0;
+  transition: opacity .15s;
+}
+
+.kb-item:hover .kb-item-del { opacity: 1; }
+.kb-item-del:hover { color: #f56c6c; }
+
+/* ==================== 对话面板 ==================== */
+
+.chat-panel { height: 100%; display: flex; flex-direction: column; }
+
+.chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-head-left { display: flex; align-items: center; gap: 8px; }
+.chat-head-left .el-icon { color: var(--brand); }
+.chat-head-name { font-weight: 600; font-size: 14px; }
+
+.chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px;
+  background: #fafbfc;
+}
+
+.msg {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+  max-width: 860px;
+}
+
+.msg.user { flex-direction: row-reverse; margin-left: auto; }
+
+.avatar {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #9aa5b5;
+}
+
+.msg.assistant .avatar { background: var(--brand); }
+
+.msg-main { min-width: 0; flex: 1 1 auto; }
+
+.bubble {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.msg.user .bubble {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* 保留模型回答里的换行（后端把 \n 原样传过来） */
+.bubble-text { white-space: pre-wrap; word-break: break-word; }
+
+.caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--brand);
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink { to { visibility: hidden; } }
+
+.bubble-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #fbc4c4;
+  color: #f56c6c;
+  font-size: 13px;
+}
+
+.bubble-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-sub);
+  font-size: 12px;
+}
+
+/* 引用来源 */
+.src-collapse { margin-top: 6px; border: none; }
+.src-collapse .el-collapse-item__header {
+  height: 30px;
+  line-height: 30px;
+  border-bottom: none;
+  background: transparent;
+  font-size: 12px;
+}
+.src-collapse .el-collapse-item__wrap { border-bottom: none; background: transparent; }
+.src-collapse .el-collapse-item__content { padding-bottom: 0; }
+.src-title { color: var(--brand); font-size: 12px; }
+
+.src-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #f4f6fa;
+  border-left: 3px solid var(--brand);
+  border-radius: 0 4px 4px 0;
+}
+
+.src-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.src-file { font-weight: 600; }
+.src-score { color: var(--text-sub); }
+.src-path { margin-top: 2px; font-size: 12px; color: var(--brand); }
+.src-terms { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+
+.src-content {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #5a6472;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+/* 输入区 */
+.chat-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+
+.chat-foot .el-textarea { flex: 1 1 auto; }
+.send-btn { flex: 0 0 auto; height: 54px; width: 92px; }
+
+/* ==================== 资料管理 ==================== */
+
+.doc-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px 16px;
+  overflow-y: auto;
+}
+
+.doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0 14px;
+}
+
+.doc-head-left { display: flex; align-items: center; gap: 8px; }
+.doc-head-left .el-icon { color: var(--brand); }
+.doc-head-name { font-weight: 600; font-size: 14px; }
+.doc-head-count { font-size: 12px; color: var(--text-sub); }
+
+.doc-table { flex: 1 1 auto; }
+.doc-pager { margin-top: 14px; justify-content: flex-end; }
+
+/* 上传对话框 */
+.up-file {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #f4f6fa;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.up-block { margin-top: 12px; }
+
+.up-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--brand);
+}
+
+.up-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.up-label { flex: 0 0 68px; font-size: 13px; color: #5a6472; }
+.up-select { flex: 1 1 auto; }
+.up-num { flex: 1 1 auto; }
+
+.up-advanced { margin-top: 12px; }
+.up-advanced .el-collapse-item__header { font-size: 13px; color: var(--text-sub); }

@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 
@@ -47,19 +48,20 @@ public class VectorStoreDao {
 
     /**
      * 向量相似度检索：<=> 是 pgvector 的余弦距离运算符，
-     * 1 - 距离 = 余弦相似度，越大越相关，按距离升序取 TopK
+     * 1 - 距离 = 余弦相似度，越大越相关，按距离升序取 TopK。
+     * kbIds 为服务端解析的可见库白名单（统一问答跨库检索）
      */
-    public List<VectorHit> searchByKb(Long kbId, float[] queryVector, int topK) {
+    public List<VectorHit> searchByKbs(Collection<Long> kbIds, float[] queryVector, int topK) {
         String sql = """
-                SELECT c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
+                SELECT c.kb_id, c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
                        1 - (c.embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM document_chunk c
-                WHERE c.kb_id = :kbId
+                WHERE c.kb_id IN (:kbIds)
                 ORDER BY c.embedding <=> CAST(:embedding AS vector)
                 LIMIT :topK
                 """;
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("kbId", kbId)
+                .addValue("kbIds", kbIds)
                 .addValue("embedding", toVectorLiteral(queryVector))
                 .addValue("topK", topK);
         return jdbc.query(sql, params, rowMapper());
@@ -67,18 +69,18 @@ public class VectorStoreDao {
 
     /**
      * 范围内向量检索（摘要树检索第二阶段）：只在摘要召回命中的 (doc_id, parent_index)
-     * 范围内检索子块；scopes 为空时调用方应改用全量 searchByKb
+     * 范围内检索子块；scopes 为空时调用方应改用全量 searchByKbs
      */
-    public List<VectorHit> searchByKb(Long kbId, float[] queryVector, int topK, List<Scope> scopes) {
+    public List<VectorHit> searchByKbs(Collection<Long> kbIds, float[] queryVector, int topK, List<Scope> scopes) {
         StringBuilder sql = new StringBuilder("""
-                SELECT c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
+                SELECT c.kb_id, c.doc_id, c.chunk_index, c.content, c.parent_content, c.heading_path,
                        1 - (c.embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM document_chunk c
-                WHERE c.kb_id = :kbId
+                WHERE c.kb_id IN (:kbIds)
                   AND (c.doc_id, c.parent_index) IN (
                 """);
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("kbId", kbId)
+                .addValue("kbIds", kbIds)
                 .addValue("embedding", toVectorLiteral(queryVector))
                 .addValue("topK", topK);
         for (int i = 0; i < scopes.size(); i++) {
@@ -119,6 +121,7 @@ public class VectorStoreDao {
 
     private org.springframework.jdbc.core.RowMapper<VectorHit> rowMapper() {
         return (rs, n) -> new VectorHit(
+                rs.getLong("kb_id"),
                 rs.getLong("doc_id"),
                 rs.getInt("chunk_index"),
                 rs.getString("content"),

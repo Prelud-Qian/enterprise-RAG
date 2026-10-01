@@ -2,20 +2,25 @@ package com.enterprise.rag.service;
 
 import com.enterprise.rag.config.RagProperties;
 import com.enterprise.rag.dao.mapper.DocumentMapper;
+import com.enterprise.rag.dao.mapper.KnowledgeBaseMapper;
 import com.enterprise.rag.dao.pg.Bm25Hit;
 import com.enterprise.rag.dao.pg.SummaryDao;
 import com.enterprise.rag.dao.pg.SummaryHit;
 import com.enterprise.rag.dao.pg.VectorHit;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
 import com.enterprise.rag.entity.Document;
+import com.enterprise.rag.entity.KnowledgeBase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +45,12 @@ public class RetrievalService {
     private final RerankService rerankService;
     private final QueryRewriteService queryRewriteService;
     private final SummaryDao summaryDao;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
+
+    /** 单库检索入口：委托多库版本（旧接口 / 评测脚本沿用） */
+    public RetrievalResult retrieve(Long kbId, String query) {
+        return retrieve(List.of(kbId), query);
+    }
 
     /**
      * query ─┬─ ⓪ 改写 → [q1, q2, q3]  （1 个问题变 3 个）
@@ -52,9 +63,9 @@ public class RetrievalService {
      *        ③ Rerank 精排 → 截到 finalTopK=5
      *        ④ 父块展开（子块换父块，同父块去重）
      *        ⑤ 回填文件名（查 MySQL）
-     *        ⑥ 返回
+     *        ⑥ 返回（多库检索：一次改写 / 一次 RRF / 一次精排，跨库统一融合）
      */
-    public RetrievalResult retrieve(Long kbId, String query) {
+    public RetrievalResult retrieve(List<Long> kbIds, String query) {
         // 从 props 配置对象中取出"检索（Retrieval）"这部分配置，赋值给变量 r，后续可以通过 r 访问具体的检索参数
         RagProperties.Retrieval r = props.getRetrieval();
 
@@ -76,7 +87,7 @@ public class RetrievalService {
             // 看看配置里"摘要检索"这个开关打开了没
             if (props.getSummary().getEnabled()) {
                 // 拿刚才那个向量去摘要表里搜，找出最像的 3 个父块
-                List<SummaryHit> summaryHits = summaryDao.searchByKb(kbId, queryVector, props.getSummary().getTopN());
+                List<SummaryHit> summaryHits = summaryDao.searchByKbs(kbIds, queryVector, props.getSummary().getTopN());
                 if (!summaryHits.isEmpty()) {
                     //  把这 3 个父块转成 3 个"范围"（哪个文档的第几个父块），等下就用它圈定搜索地盘
                     List<VectorStoreDao.Scope> scopes = summaryHits.stream()
@@ -84,15 +95,15 @@ public class RetrievalService {
                             .distinct()
                             .toList();
                     // 在刚圈定的 3 个范围里，用同一个向量搜子块，取最像的 10 个
-                    vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK(), scopes);
+                    vectorHits = vectorStoreDao.searchByKbs(kbIds, queryVector, r.getVectorTopK(), scopes);
                     log.debug("摘要召回 {} 个父块范围，范围内子块检索命中 {}", scopes.size(), vectorHits.size());
                 } else {
                     // 摘要一条都没搜到的话，就不圈范围了，退回全库搜，同样取 10 条
-                    vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK());
+                    vectorHits = vectorStoreDao.searchByKbs(kbIds, queryVector, r.getVectorTopK());
                 }
             } else {
                 // 摘要功能压根没开的话，也是全库搜 10 条
-                vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK());
+                vectorHits = vectorStoreDao.searchByKbs(kbIds, queryVector, r.getVectorTopK());
             }
 
             /**
@@ -102,7 +113,7 @@ public class RetrievalService {
              */
 
             // 拿查询 q 去内存倒排表里打分，取前 10 条  降序（分数从高到低）
-            List<Bm25Hit> bm25Hits = bm25IndexService.search(kbId, q, r.getBm25TopK());
+            List<Bm25Hit> bm25Hits = bm25IndexService.search(kbIds, q, r.getBm25TopK());
             // 向量检索结果 不为空
             if (!vectorHits.isEmpty()) {
                 // 把本轮向量第 1 名的相似度记下来，跟历史峰值比，只留大的
@@ -119,7 +130,7 @@ public class RetrievalService {
                  * 查不到就新建一个放进去再返回。两种情况都返回一个 RetrievedChunk 赋值给 chunk。
                  */
                 RetrievedChunk chunk = merged.computeIfAbsent(new ChunkKey(h.docId(), h.chunkIndex()),
-                        k -> new RetrievedChunk(h.docId(), h.chunkIndex(), h.content()));
+                        k -> new RetrievedChunk(h.kbId(), h.docId(), h.chunkIndex(), h.content()));
                 /**
                  * chunk 是 merged 里那个对象的引用。循环里改的是对象的字段，不是新的数据副本。merged 一直持有这些对象，不需要额外"保存"
                  */
@@ -133,7 +144,7 @@ public class RetrievalService {
             for (int i = 0; i < bm25Hits.size(); i++) {
                 Bm25Hit h = bm25Hits.get(i);
                 RetrievedChunk chunk = merged.computeIfAbsent(new ChunkKey(h.docId(), h.chunkIndex()),
-                        k -> new RetrievedChunk(h.docId(), h.chunkIndex(), h.content()));
+                        k -> new RetrievedChunk(h.kbId(), h.docId(), h.chunkIndex(), h.content()));
                 chunk.addScore(1.0 / (rrfK + i + 1));
                 chunk.setParentContent(h.parentContent());
                 chunk.setHeadingPath(h.headingPath());
@@ -195,6 +206,14 @@ public class RetrievalService {
                 .stream()
                 .collect(Collectors.toMap(Document::getId, Document::getFileName, (a, b) -> a));
         expanded.forEach(c -> c.setFileName(fileNameMap.getOrDefault(c.getDocId(), "")));
+
+        // 回填知识库名（来源展示）
+        Set<Long> kbIdSet = expanded.stream().map(RetrievedChunk::getKbId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, String> kbNameMap = kbIdSet.isEmpty() ? new HashMap<>()
+                : knowledgeBaseMapper.selectBatchIds(kbIdSet).stream()
+                        .collect(Collectors.toMap(KnowledgeBase::getId, KnowledgeBase::getName, (a, b) -> a));
+        expanded.forEach(c -> c.setKbName(kbNameMap.getOrDefault(c.getKbId(), "")));
 
         return new RetrievalResult(expanded, maxSimilarity);
 

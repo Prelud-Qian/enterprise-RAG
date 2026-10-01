@@ -48,6 +48,10 @@ public class SecurityConfig {
                         // 不放行会因取不到 SecurityContext 而抛 AccessDenied，此时响应已提交只能刷日志
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/**", "/error").permitAll()
+                        // 前端静态资源放行：Vue3 + Element Plus 由 Spring Boot 直接托管，未登录也要能打开页面。
+                        // 只放行静态路径，/api/** 仍受 anyRequest().authenticated() 保护
+                        .requestMatchers("/", "/index.html", "/favicon.ico").permitAll()
+                        .requestMatchers("/css/**", "/js/**", "/lib/**").permitAll()
                         // Swagger 文档放行
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         // 可观测性：健康检查公开，指标仅 ADMIN

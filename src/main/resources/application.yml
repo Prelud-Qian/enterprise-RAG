@@ -103,6 +103,16 @@ rag:
     tika-write-limit: 2000000   # Tika 解析写入上限（字符），防止超大文档打爆内存
     allowed-extensions: pdf,doc,docx
     async: false                # true=秒返回+后台处理，轮询文档状态；false=同步处理完返回
+  # 上传前自动分类：Tika 取样文档开头 → LLM 从候选知识库中选一个（失败降级为前端手动选择）
+  classify:
+    enabled: true
+    sample-chars: 2000          # 取样字符数（Tika writeLimit，取满即中断，比解析全文快得多）
+    max-candidates: 20          # 候选知识库上限（按创建时间倒序，防 Prompt 过长）
+  # 统一问答（/api/ask）：LLM 从我的知识库里选最相关的前 N 个再融合检索；失败降级全库
+  routing:
+    enabled: true
+    top-n: 3                # 最多选中的知识库数
+    max-candidates: 20      # 候选知识库上限（按创建时间倒序，防 Prompt 过长）
   # RAG Prompt 模板：{context} 注入检索片段，{question} 注入用户问题
   prompt-template: |
     你是一名严谨的企业知识库问答助手，请严格依据【参考资料】回答用户问题。

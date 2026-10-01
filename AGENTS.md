@@ -1,12 +1,12 @@
 # AGENTS.md — enterprise-RAG
 
-面试向企业知识库 RAG 问答系统。Spring Boot 3.3 + LangChain4j 1.7 + MySQL(业务) + PostgreSQL/pgvector(向量) + 通义千问/BGE-M3(OpenAI 兼容协议)。纯后端 RESTful，无前端。
+面试向企业知识库 RAG 问答系统。Spring Boot 3.3 + LangChain4j 1.7 + MySQL(业务) + PostgreSQL/pgvector(向量) + 通义千问/BGE-M3(OpenAI 兼容协议)。后端 RESTful + 内置单页前端（Vue3 + Element Plus，无构建，随 jar 托管）。
 
 ## 常用命令
 
 ```bash
 mvn -q compile          # 编译（本机 Maven 已绑定 JDK17；PATH 默认 java 是 1.8，别用 java 命令验证）
-mvn test                # 21 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词/限流），改检索逻辑必跑
+mvn test                # 28 个单元测试（标题分块/BM25/命中词/RRF 融合/多查询/摘要范围检索/父块展开/分词/限流/知识库路由），改检索逻辑必跑
 mvn spring-boot:run     # 启动，先决条件见下
 python docs/eval/eval.py --token <JWT> --kb 1 --k 5   # 检索评测（Hit@5 报告）
 ```
@@ -38,6 +38,8 @@ util/      SecurityUtil、JiebaUtil
 问答: QaService.ask / askStream(SSE)
   ⓪ 多轮会话(可选): conversationId 非空时校验归属(user+kb,否则404)并取最近3轮历史注入 Prompt;
      为空则新建 conversation 行并把 id 返回给客户端
+  ⓪ 路由(仅 /api/ask 统一入口): LLM 从我的知识库(listMine 白名单)选 ≤3 个最相关库融合检索;
+     单库直通、无候选 400、调用失败降级全部库; 旧 /api/kb/{kbId}/ask 不路由
   ① QueryRewriteService 多查询改写(失败降级原问题) → ② 摘要树检索: SummaryDao 搜摘要 Top3 定
      (doc_id,parent_index) 范围 → 范围内 VectorStoreDao 向量 Top10(摘要为空降级全库) + BM25 Top10(含命中词)
   → ③ RRF(k=60) 跨查询累积 → ④ RerankService gte-rerank 精排(失败降级 RRF 序)
@@ -48,7 +50,7 @@ util/      SecurityUtil、JiebaUtil
 
 ## 关键不变量（改代码前必读）
 
-1. **知识库隔离**：一切按 kb 操作的入口必须先过 `KnowledgeBaseService.requireAccess(kbId)`（404/403）；pgvector 的 SQL 必须带 `kb_id` 过滤（存储层兜底）
+1. **知识库隔离**：一切按 kb 操作的入口必须先过 `KnowledgeBaseService.requireAccess(kbId)`（404/403）；pgvector 的 SQL 必须带 `kb_id` 过滤（存储层兜底）；统一问答的库白名单来自 `listMine()`，pgvector SQL 仍强制 `kb_id IN` 过滤
 2. **双数据源无事务**：MySQL(MP 主数据源) + PG(`@Qualifier("pgJdbcTemplate")`) 不能放一个事务里。PG 操作不要加 `@Transactional`；一致性靠 document 状态机（PARSING/READY/FAILED）+ 失败补偿（`processDocument` 的 catch 里删片段、标 FAILED）
 3. **BM25 索引失效**：文档增删、知识库删除后必须 `bm25IndexService.rebuild(kbId)`，否则检索到已删数据（懒加载+整体重建策略）
 4. **small-to-big 数据形态**：document_chunk 的 content=子块（检索/向量化对象），parent_content=父块（喂 LLM 用，可空）；heading_path=章节路径、parent_index=父块序号（0=单级模式）；`chunk.parent-size<=size` 时退化为单级分块。老库升级 SQL 见 sql/pgvector_schema.sql 注释
@@ -57,7 +59,7 @@ util/      SecurityUtil、JiebaUtil
 7. **流式接口有两条错误通道**：`/ask/stream` 的 SseEmitter（message/sources/error 事件）只兜成功路径和 LLM 调用中的异常；`requireAccess`/`checkAsk`/参数校验是**同步**抛出，照走 GlobalExceptionHandler 返回 JSON —— 所以异常响应必须显式 `contentType(application/json)`，`produces=text/event-stream` 协商不出 JSON 时会退化成 500 空响应体
 8. **异步线程拿不到请求线程的上下文**：① `rag.upload.async=true` 时上传秒返回 PARSING，后台线程处理，轮询 `GET /api/documents` 看状态；MultipartFile 必须在请求线程读成字节数组再交给线程池。② SSE 回调（onCompleteResponse/onError）跑在 langchain4j 的 ForkJoinPool 线程上，SecurityContext ThreadLocal 为空 —— userId 必须在请求线程取好传进 `qaLogService.save`，不能在回调里现调 `SecurityUtil.currentUser()`
 9. **ASYNC/ERROR 派发必须放行**：SseEmitter 完成后容器会做 ASYNC 回派，`JwtAuthFilter` 是 OncePerRequestFilter（默认跳过异步派发），而 Spring Security 6 的 AuthorizationFilter 默认过滤所有 dispatcher type → SecurityConfig 里要 `dispatcherTypeMatchers(ASYNC, ERROR).permitAll()`，否则每次流式请求刷 AccessDeniedException；限流配额 `/ask` 与 `/ask/stream` 共用（10/min）
-10. **多轮会话归属**：conversation 校验必须同时满足 user_id=当前用户 AND kb_id=当前库（跨用户/跨库复用会话 id 要 404）；qa_log.conversation_id 为 NULL 表示单轮
+10. **多轮会话归属**：conversation 校验必须同时满足 user_id=当前用户 AND kb_id=当前库（跨用户/跨库复用会话 id 要 404）；qa_log.conversation_id 为 NULL 表示单轮；统一会话 kb_id=NULL（只校验 user_id），旧按库接口遇 NULL 会话返回 404
 11. **可观测性**：`/actuator/health`、`/actuator/info` 公开；`/actuator/metrics` 仅 ADMIN。改动要过 mvn test 且 GitHub Actions CI 会自动跑
 
 ## 技术栈版本坑（锁版本的原因，别乱升级）
@@ -71,6 +73,16 @@ util/      SecurityUtil、JiebaUtil
 - **Lombok is 前缀陷阱**：`private boolean isFallback` 的 getter 是 `isFallback()`，Jackson 会输出 `"fallback"` → 对外字段名必须用 `@JsonProperty("isFallback")` 固定
 - **PG DDL 不支持 MySQL 风格行内注释**：`COMMENT '...'` 是语法错误，用 `--`
 
+## 前端（src/main/resources/static，无构建）
+
+Vue3 + Element Plus 单页应用，5 个库文件锁定在 `lib/`（离线可跑）；浏览器直接开 `http://localhost:9090/`。组件：login-view / kb-panel / chat-panel / doc-panel。
+
+- **SSE 不能用原生 EventSource**：接口是 POST 且要 Authorization 头 → `js/api.js` 用 fetch + ReadableStream 手写帧解析
+- **多条 `data:` 行必须用 `\n` 拼回**：token 里的换行会被 Spring 转义成多行，只取第一行会把回答截断
+- **`ElMessage`/`ElMessageBox` 要在 app.js 开头显式转挂**：Element Plus 的 UMD 只导出 `window.ElementPlus`，不创建全局函数（踩过：ReferenceError 卡死上传对话框）
+- 统一聊天窗口：流式状态是单一 `store.chat`（不再按库分桶），走 `POST /api/ask/stream`；`meta` 事件回传 conversationId，追问时带回去复用会话；来源条目带库名标签
+- 静态资源实际从 `target/classes` 提供：CLI 改 js/css 后需 `mvn process-resources`（IDE 开自动构建时它会代劳）才生效；浏览器刷新即可，不用重启
+
 ## 配置与环境
 
 - `application.yml` 按 spring.datasource(MySQL) / pgvector.datasource / rag.* / jwt 分区；`rag.prompt-template` 占位符是 `{context}` `{question}`
@@ -83,6 +95,7 @@ util/      SecurityUtil、JiebaUtil
 
 - 检索评测 Hit@5=100%（4 文档/41 块（标题感知分块后）/30 标注，2026-09-18 新链路复测，平均相似度 0.712，docs/eval/）；**对比实验（2026-09-20）**：纯向量 90%/纯BM25 100%/无精排 100%/无改写 100%（基线 100%）；全链路冒烟 8/8；模块六测全过；单元测试 20 个
 - 多轮对话已实现（conversation 表 + 历史注入），纯指代追问实测通过（9095 端口验证）
+- **统一问答路由实测（2026-10-01，9091）**：ChatLanguageModel/embed()/阈值 等问命中 2-3 库（来源带库名）、追问复用会话、新对话开新会话；无关问题走 LLM 层二次兜底（isFallback=true、来源非空、非 500）
 - 性能：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建），稳态 5~7s/问——延迟大头是 Query 改写 + Rerank 两次 LLM 调用，低延迟场景可关 `rag.retrieval.query-rewrite.enabled`
 - **压测基线（2026-09-20）**：接口层 `/auth/me` 并发 20 → 3225 QPS / p95 16ms；RAG 全链路 `/search` 并发 5 → QPS 0.8 / avg 6.2s / p99 27.3s（瓶颈=外部模型 API 排队，非服务自身）。压测脚本在临时目录 rag_bench.py，重压时对照此基线
 - 兜底阈值 `min-similarity: 0.4` 有数据支撑（命中样本相似度均 >0.54，可收紧到 0.5）

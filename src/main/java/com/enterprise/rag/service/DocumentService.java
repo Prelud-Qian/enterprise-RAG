@@ -62,15 +62,40 @@ public class DocumentService {
     /** 文档处理线程池（rag.upload.async=true 时后台处理用） */
     private final ExecutorService uploadExecutor;
 
+    /**
+     * 一、作用
+     * 文档入库的入口 + 前置校验层。它自己不做解析、分块、向量化——那些全在 processDocument 里。
+     * 它只干五件事：校验 → 落一条 PARSING 记录 → 把文件读成字节数组 → 决定同步/异步跑 processDocument → 返回 VO。
+     *
+     * 二、按顺序处理的事
+         * 知识库权限校验
+         * 文件校验（文件名 / 扩展名 / 空 / 大小）
+         * 分块参数取值 + 边界校验
+         * 落一条 PARSING 状态的 document 记录（状态机起点）
+         * 把文件读成 byte[]
+         * 按 rag.upload.async 分发处理，返回 VO
+     */
     public DocumentVO upload(Long kbId, MultipartFile file, Integer chunkSizeParam, Integer chunkOverlapParam) {
         // 权限校验：只能给自己的知识库传文档
         knowledgeBaseService.requireAccess(kbId);
         LoginUser user = SecurityUtil.currentUser();
 
         // 文件校验：文件名清洗（防路径穿越）、扩展名白名单、大小限制
+        /**
+         * StringUtils.cleanPath(...)
+         * 这是 Spring 提供的工具方法，用来清洗文件路径。
+         *
+         * 它会做两件事：
+         *   规范化路径分隔符：把 Windows 的 \ 统一转成 /。
+         *   消除路径穿越攻击：把 .. 这样的危险字符处理掉。
+         */
         String fileName = StringUtils.cleanPath(
+                // requireNonNull 的作用：如果文件名为 null，立刻抛出 NullPointerException，并带上提示信息“文件名不能为空”。
                 Objects.requireNonNull(file.getOriginalFilename(), "文件名不能为空"));
+        // 从文件名里提取扩展名。比如 员工手册.pdf → 返回 "pdf"。
+        // 如果文件名没有扩展名（比如 README），返回 null。
         String ext = StringUtils.getFilenameExtension(fileName);
+        // 没有扩展名 → 拒绝。 或  扩展名不在白名单里 → 拒绝。
         if (ext == null || !props.getUpload().getAllowedExtensions().contains(ext.toLowerCase())) {
             throw new BusinessException("仅支持上传格式: " + props.getUpload().getAllowedExtensions());
         }
@@ -92,6 +117,10 @@ public class DocumentService {
         }
 
         // 先落一条 PARSING 状态记录，作为状态机起点
+        /**
+         * PARSING 记录，指的是在数据库（MySQL）的 document 表里，插入的一条状态为“解析中”的文档记录。
+         * PARSING 记录 是文档处理流程的“占位符”和“状态标记”，用来告诉系统、前端和数据库：“这个文档已经收到了，正在后台处理中，请稍等。”
+         */
         Document doc = new Document();
         doc.setKbId(kbId);
         doc.setFileName(fileName);
@@ -103,6 +132,9 @@ public class DocumentService {
 
         // 在请求线程内读完字节流：MultipartFile 的临时文件在请求结束后可能被清理，
         // 异步模式下后台线程必须拿字节数组而不是 MultipartFile
+        /**
+         * 读取文件字节流（并处理失败） 和 根据配置选择同步/异步处理模式。
+         */
         byte[] data;
         try {
             data = file.getBytes();

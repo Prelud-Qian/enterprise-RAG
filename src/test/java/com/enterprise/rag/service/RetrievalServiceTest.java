@@ -2,12 +2,14 @@ package com.enterprise.rag.service;
 
 import com.enterprise.rag.config.RagProperties;
 import com.enterprise.rag.dao.mapper.DocumentMapper;
+import com.enterprise.rag.dao.mapper.KnowledgeBaseMapper;
 import com.enterprise.rag.dao.pg.Bm25Hit;
 import com.enterprise.rag.dao.pg.SummaryDao;
 import com.enterprise.rag.dao.pg.SummaryHit;
 import com.enterprise.rag.dao.pg.VectorHit;
 import com.enterprise.rag.dao.pg.VectorStoreDao;
 import com.enterprise.rag.entity.Document;
+import com.enterprise.rag.entity.KnowledgeBase;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,8 @@ class RetrievalServiceTest {
     private QueryRewriteService queryRewriteService;
     @Mock
     private SummaryDao summaryDao;
+    @Mock
+    private KnowledgeBaseMapper knowledgeBaseMapper;
 
     private RetrievalService service;
 
@@ -53,7 +57,7 @@ class RetrievalServiceTest {
     void setUp() {
         RagProperties props = new RagProperties();
         service = new RetrievalService(embeddingService, vectorStoreDao, bm25IndexService,
-                documentMapper, props, rerankService, queryRewriteService, summaryDao);
+                documentMapper, props, rerankService, queryRewriteService, summaryDao, knowledgeBaseMapper);
         // 默认不做改写（改写行为单独用例覆盖），保持原查询
         when(queryRewriteService.rewrite(anyString()))
                 .thenAnswer(inv -> List.of(inv.getArgument(0, String.class)));
@@ -71,10 +75,10 @@ class RetrievalServiceTest {
         });
         // 向量召回: A(rank0), B(rank1)；BM25 召回: B(rank0), C(rank1)
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10))).thenReturn(List.of(
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10))).thenReturn(List.of(
                 new VectorHit(1L, 1, "A片段", 0.9),
                 new VectorHit(2L, 1, "B片段", 0.8)));
-        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of(
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of(
                 new Bm25Hit(2L, 1, "B片段", 2.0),
                 new Bm25Hit(3L, 1, "C片段", 1.0)));
         when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(
@@ -93,8 +97,8 @@ class RetrievalServiceTest {
     @DisplayName("召回为空：两路都无结果时返回空，不触发精排")
     void 空召回() {
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10))).thenReturn(List.of());
-        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of());
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10))).thenReturn(List.of());
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of());
 
         RetrievalResult result = service.retrieve(1L, "测试问题");
 
@@ -115,11 +119,11 @@ class RetrievalServiceTest {
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
         when(embeddingService.embed("改写查询2")).thenReturn(new float[1024]);
         // 查询1: 向量命中 A；查询2: 向量命中 B
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10)))
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10)))
                 .thenReturn(List.of(new VectorHit(1L, 1, "A片段", 0.9)))
                 .thenReturn(List.of(new VectorHit(2L, 1, "B片段", 0.85)));
         // 查询1: BM25 也命中 B（B 在两个列表都有排名）
-        when(bm25IndexService.search(eq(1L), anyString(), eq(10)))
+        when(bm25IndexService.search(eq(List.of(1L)), anyString(), eq(10)))
                 .thenReturn(List.of(new Bm25Hit(2L, 1, "B片段", 2.0)))
                 .thenReturn(List.of());
         when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(
@@ -144,11 +148,11 @@ class RetrievalServiceTest {
         });
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
         String parent = "父级块完整内容";
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10))).thenReturn(List.of(
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10))).thenReturn(List.of(
                 new VectorHit(1L, 1, "子块一", 0.9, parent),
                 new VectorHit(1L, 2, "子块二", 0.8, parent),
                 new VectorHit(2L, 1, "独立子块", 0.7)));
-        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of());
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of());
         when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(
                 doc(1L, "文件A"), doc(2L, "文件B")));
 
@@ -171,19 +175,19 @@ class RetrievalServiceTest {
         });
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
         // 摘要召回命中 2 个父块范围
-        when(summaryDao.searchByKb(eq(1L), any(), eq(3))).thenReturn(List.of(
+        when(summaryDao.searchByKbs(eq(List.of(1L)), any(), eq(3))).thenReturn(List.of(
                 new SummaryHit(1L, 1, "休假制度摘要", 0.8),
                 new SummaryHit(1L, 2, "薪酬福利摘要", 0.7)));
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10), anyList())).thenReturn(List.of(
-                new VectorHit(1L, 3, "年假五天", 0.9, "父块一", "员工手册 > 第三章 休假制度 > 第五条")));
-        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of());
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10), anyList())).thenReturn(List.of(
+                new VectorHit(1L, 1L, 3, "年假五天", 0.9, "父块一", "员工手册 > 第三章 休假制度 > 第五条")));
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of());
         when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(doc(1L, "员工手册")));
 
         RetrievalResult result = service.retrieve(1L, "测试问题");
 
         // 范围内检索被调用（带 scopes 参数），普通全库检索未被调用
-        verify(vectorStoreDao).searchByKb(eq(1L), any(), eq(10), anyList());
-        verify(vectorStoreDao, never()).searchByKb(eq(1L), any(), eq(10));
+        verify(vectorStoreDao).searchByKbs(eq(List.of(1L)), any(), eq(10), anyList());
+        verify(vectorStoreDao, never()).searchByKbs(eq(List.of(1L)), any(), eq(10));
         // 章节路径与父块透传
         assertEquals("员工手册 > 第三章 休假制度 > 第五条", result.chunks().get(0).getHeadingPath());
         assertEquals("父块一", result.chunks().get(0).getContent());   // 父块展开
@@ -198,14 +202,44 @@ class RetrievalServiceTest {
             return candidates.stream().limit(topK).toList();
         });
         when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
-        when(vectorStoreDao.searchByKb(eq(1L), any(), eq(10))).thenReturn(List.of());
-        when(bm25IndexService.search(eq(1L), eq("测试问题"), eq(10))).thenReturn(List.of(
-                new Bm25Hit(1L, 1, "关键词片段", 2.0, null, null, List.of("年假", "十三薪"))));
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10))).thenReturn(List.of());
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of(
+                new Bm25Hit(1L, 1L, 1, "关键词片段", 2.0, null, null, List.of("年假", "十三薪"))));
         when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(doc(1L, "文件A")));
 
         RetrievalResult result = service.retrieve(1L, "测试问题");
 
         assertEquals(List.of("年假", "十三薪"), result.chunks().get(0).getMatchedTerms());
+    }
+
+    @Test
+    @DisplayName("来源回填：知识库名按 kbId 回填，缺失时为空白不报错")
+    void 来源回填知识库名() {
+        when(rerankService.rerank(anyString(), any(), anyInt())).thenAnswer(inv -> {
+            List<RetrievedChunk> candidates = inv.getArgument(1);
+            int topK = inv.getArgument(2);
+            return candidates.stream().limit(topK).toList();
+        });
+        when(embeddingService.embed("测试问题")).thenReturn(new float[1024]);
+        when(vectorStoreDao.searchByKbs(eq(List.of(1L)), any(), eq(10))).thenReturn(List.of(
+                new VectorHit(1L, 1L, 1, "A片段", 0.9, null, null),
+                new VectorHit(2L, 2L, 1, "B片段", 0.8, null, null)));   // B 的库已被删除
+        when(bm25IndexService.search(eq(List.of(1L)), eq("测试问题"), eq(10))).thenReturn(List.of());
+        when(documentMapper.selectBatchIds(anyCollection())).thenReturn(List.of(
+                doc(1L, "文件A"), doc(2L, "文件B")));
+        when(knowledgeBaseMapper.selectBatchIds(anyCollection())).thenReturn(List.of(kb(1L, "员工手册")));
+
+        RetrievalResult result = service.retrieve(1L, "测试问题");
+
+        assertEquals("员工手册", result.chunks().get(0).getKbName());
+        assertEquals("", result.chunks().get(1).getKbName());
+    }
+
+    private KnowledgeBase kb(Long id, String name) {
+        KnowledgeBase k = new KnowledgeBase();
+        k.setId(id);
+        k.setName(name);
+        return k;
     }
 
     private Document doc(Long id, String fileName) {

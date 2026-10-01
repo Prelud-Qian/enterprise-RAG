@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -49,6 +50,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleNotFound(NoResourceFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_JSON)
                 .body(Result.fail(404, "接口不存在"));
+    }
+
+    /** 客户端主动断开（刷新页面/停止生成）导致 SSE 写失败：连接已不可用、无响应可写，降为 DEBUG 免刷 ERROR 日志 */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientAbort(AsyncRequestNotUsableException e) {
+        log.debug("客户端已断开，忽略异步响应写入失败: {}", e.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

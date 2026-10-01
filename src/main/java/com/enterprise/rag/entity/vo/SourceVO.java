@@ -15,6 +15,8 @@ public class SourceVO {
     /** 文档 id（MySQL document 表） */
     private Long docId;
     private String fileName;
+    /** 所属知识库名称（统一问答来源可能跨库） */
+    private String kbName;
     /** 片段序号（从 1 开始） */
     private Integer chunkIndex;
     /** 片段原文 */

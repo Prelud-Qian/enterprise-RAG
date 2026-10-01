@@ -1,8 +1,10 @@
 package com.enterprise.rag.controller;
 
 import com.enterprise.rag.common.Result;
+import com.enterprise.rag.entity.vo.ClassifyVO;
 import com.enterprise.rag.entity.vo.DocumentVO;
 import com.enterprise.rag.entity.vo.PageVO;
+import com.enterprise.rag.service.DocumentClassifyService;
 import com.enterprise.rag.service.DocumentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -24,6 +26,16 @@ import org.springframework.web.multipart.MultipartFile;
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final DocumentClassifyService documentClassifyService;
+
+    /**
+     * 上传前自动分类：Tika 取样文档开头，LLM 推荐知识库。
+     * 失败降级为「不推荐」而不是报错，不阻断上传
+     */
+    @PostMapping(value = "/classify", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<ClassifyVO> classify(@RequestParam("file") MultipartFile file) {
+        return Result.ok(documentClassifyService.classify(file));
+    }
 
     /**
      * 上传文档。chunkSize / chunkOverlap 可选，不传用 yml 默认值

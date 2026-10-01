@@ -38,13 +38,13 @@ public class QaController {
     }
 
     /**
-     * 流式提问（SSE）：答案逐 token 返回，事件 message=内容，sources=溯源 JSON。
+     * 流式提问（SSE）：答案逐 token 返回，事件 meta=会话 id，message=内容，sources=溯源 JSON。
      * 流式接口返回 SseEmitter，不经过统一 Result 包装
      */
     @PostMapping(value = "/{kbId}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter askStream(@PathVariable Long kbId, @Valid @RequestBody AskRequest req) {
         SseEmitter emitter = new SseEmitter(120_000L); // 2 分钟超时
-        qaService.askStream(kbId, req.getQuestion(), emitter);
+        qaService.askStream(kbId, req.getQuestion(), req.getConversationId(), emitter);
         return emitter;
     }
 

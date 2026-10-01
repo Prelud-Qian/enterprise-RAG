@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 
@@ -35,18 +36,18 @@ public class SummaryDao {
         jdbc.batchUpdate(sql, batch.toArray(new MapSqlParameterSource[0]));
     }
 
-    /** 摘要召回：查询向量 vs 各父块摘要，TopK 返回 (docId, parentIndex) 范围 */
-    public List<SummaryHit> searchByKb(Long kbId, float[] queryVector, int topK) {
+    /** 摘要召回：查询向量 vs 各父块摘要，TopK 返回 (docId, parentIndex) 范围；kbIds 为可见库白名单 */
+    public List<SummaryHit> searchByKbs(Collection<Long> kbIds, float[] queryVector, int topK) {
         String sql = """
                 SELECT doc_id, parent_index, summary,
                        1 - (embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM chunk_summary
-                WHERE kb_id = :kbId
+                WHERE kb_id IN (:kbIds)
                 ORDER BY embedding <=> CAST(:embedding AS vector)
                 LIMIT :topK
                 """;
         MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("kbId", kbId)
+                .addValue("kbIds", kbIds)
                 .addValue("embedding", toVectorLiteral(queryVector))
                 .addValue("topK", topK);
         return jdbc.query(sql, params, (rs, n) -> new SummaryHit(

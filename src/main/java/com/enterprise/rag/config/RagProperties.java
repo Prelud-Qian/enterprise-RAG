@@ -28,6 +28,10 @@ public class RagProperties {
     private RateLimit rateLimit = new RateLimit();
     /** 上传限制 */
     private Upload upload = new Upload();
+    /** 上传前自动分类（Tika 取样 → LLM 选库，失败降级为手动选择） */
+    private Classify classify = new Classify();
+    /** 统一问答的知识库路由（LLM 选库后跨库检索；关闭/失败降级为全部候选库） */
+    private Routing routing = new Routing();
     /** Prompt 模板，占位符 {context} {question} */
     private String promptTemplate;
 
@@ -119,5 +123,25 @@ public class RagProperties {
         private List<String> allowedExtensions = List.of("pdf", "doc", "docx");
         /** true=上传后立即返回，后台线程处理（状态轮询）；false=同步处理完再返回 */
         private Boolean async = false;
+    }
+
+    @Data
+    public static class Classify {
+        /** 是否启用 LLM 分类（关闭时接口直接返回降级结果，前端退化为手动选库） */
+        private Boolean enabled = true;
+        /** 取样字符数：Tika writeLimit，取满即中断解析（2000 字符约 1~2 页，取样很快） */
+        private Integer sampleChars = 2000;
+        /** 候选知识库上限（按创建时间倒序取前 N 个，防止 Prompt 过长） */
+        private Integer maxCandidates = 20;
+    }
+
+    @Data
+    public static class Routing {
+        /** 是否启用 LLM 路由（关闭时直接用全部候选库） */
+        private Boolean enabled = true;
+        /** 最多选中的知识库数 */
+        private Integer topN = 3;
+        /** 候选知识库上限（按创建时间倒序取前 N 个，防止 Prompt 过长） */
+        private Integer maxCandidates = 20;
     }
 }

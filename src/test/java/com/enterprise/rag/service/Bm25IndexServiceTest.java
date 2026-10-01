@@ -40,7 +40,7 @@ class Bm25IndexServiceTest {
                 new ChunkRef(10L, 1, "员工年假制度说明"),
                 new ChunkRef(10L, 2, "差旅报销流程指南")));
 
-        List<Bm25Hit> hits = service.search(1L, "年假怎么休", 3);
+        List<Bm25Hit> hits = service.search(List.of(1L), "年假怎么休", 3);
 
         assertFalse(hits.isEmpty());
         assertEquals(10L, hits.get(0).docId());
@@ -58,7 +58,7 @@ class Bm25IndexServiceTest {
                 new ChunkRef(10L, 1, "员工年假制度说明"),
                 new ChunkRef(10L, 2, "差旅报销流程指南")));
 
-        assertTrue(service.search(1L, "量子力学", 3).isEmpty());
+        assertTrue(service.search(List.of(1L), "量子力学", 3).isEmpty());
     }
 
     @Test
@@ -67,9 +67,9 @@ class Bm25IndexServiceTest {
         when(vectorStoreDao.loadChunksByKb(1L)).thenReturn(List.of(
                 new ChunkRef(10L, 1, "员工年假制度说明")));
 
-        service.search(1L, "年假", 3);
+        service.search(List.of(1L), "年假", 3);
         service.rebuild(1L);
-        service.search(1L, "年假", 3);
+        service.search(List.of(1L), "年假", 3);
 
         verify(vectorStoreDao, times(2)).loadChunksByKb(1L);
     }
@@ -78,6 +78,6 @@ class Bm25IndexServiceTest {
     @DisplayName("空知识库：无片段时不报错返回空")
     void 空索引() {
         when(vectorStoreDao.loadChunksByKb(1L)).thenReturn(List.of());
-        assertTrue(service.search(1L, "任意问题", 3).isEmpty());
+        assertTrue(service.search(List.of(1L), "任意问题", 3).isEmpty());
     }
 }

@@ -91,6 +91,7 @@
 
 ```
 提问
+  → ⓪ 知识库路由（仅 /api/ask：LLM 从我的知识库中选 ≤3 个最相关库；单库直通、失败降级全部库）
   → ① 权限校验（requireAccess：kb 与用户绑定，检索前拦截）
   → ② Query 改写（LLM 多查询，失败降级原问题）
   → ③ 摘要树检索（先搜父块摘要定范围 → 范围内子块向量 Top10）
@@ -261,11 +262,14 @@ mvn spring-boot:run
 | GET | /api/kb | 我的知识库列表 |
 | GET | /api/kb/{id} | 知识库详情 |
 | DELETE | /api/kb/{id} | 删除（级联） |
+| POST | /api/documents/classify | 上传前自动分类：取样文档开头 → LLM 从我的知识库中选一个（multipart：file；失败降级为手动选择，不阻断上传） |
 | POST | /api/documents/upload | 上传 PDF/Word（multipart：file, kbId, 可选 chunkSize/chunkOverlap） |
 | GET | /api/documents?kbId= | 文档分页列表 |
 | DELETE | /api/documents/{id} | 删除文档（级联向量+重建索引） |
+| POST | /api/ask | **统一提问**：不指定知识库，后端 LLM 自动路由到最相关的库（≤3 个）融合检索；失败/无匹配降级全部库；body/响应同 /api/kb/{kbId}/ask（来源含 kbName） |
+| POST | /api/ask/stream | **统一流式提问**（SSE）：事件序与 /api/kb/{kbId}/ask/stream 一致；与 /ask 系列共用 10/min 限流 |
 | POST | /api/kb/{kbId}/ask | 提问 → 回答 + 引用来源 + 兜底标记；body 传 `conversationId` 启用多轮对话（带最近 3 轮历史上下文，响应返回会话 id） |
-| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 逐 token 返回）；与 /ask 共用 10/min 限流配额，超限返回 429 |
+| POST | /api/kb/{kbId}/ask/stream | 流式提问（SSE 事件序：`meta` 会话 id → `message` 逐 token → `sources` 溯源 JSON）；与 /ask 共用 10/min 限流配额，超限返回 429 |
 | POST | /api/kb/{kbId}/search | 仅检索不生成（调试/评测用） |
 | GET | /api/kb/{kbId}/qa-logs | 问答日志分页（审计） |
 | GET | /api/admin/users | 用户列表（仅 ADMIN，RBAC 验证） |
@@ -360,5 +364,7 @@ enterprise-RAG
 │   ├── entity/                   # 实体 + dto/ + vo/
 │   └── util/                     # SecurityUtil / JiebaUtil
 ├── src/test/java/...             # 单元测试（分块/BM25/RRF 融合/分词）
-└── src/main/resources/application.yml
+└── src/main/resources/
+    ├── application.yml
+    └── static/                   # 内置前端（Vue3 + Element Plus，无构建，随 jar 托管）
 ```

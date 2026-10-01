@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>企业知识库问答</title>
+  <!-- data: 空图标，避免浏览器去请求不存在的 /favicon.ico 刷 404 日志 -->
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/lib/element-plus.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div id="app">
+    <div class="boot"><span>加载中…</span></div>
+  </div>
+
+  <!-- 库文件放本地（不用 CDN）：内网/断网也能演示。版本锁定，见 lib 目录 -->
+  <script src="/lib/vue.global.prod.js"></script>
+  <script src="/lib/element-plus.full.min.js"></script>
+  <script src="/lib/element-plus-locale-zh-cn.min.js"></script>
+  <script src="/lib/element-plus-icons.iife.min.js"></script>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/store.js"></script>
+  <script src="/js/components/login-view.js"></script>
+  <script src="/js/components/kb-panel.js"></script>
+  <script src="/js/components/chat-panel.js"></script>
+  <script src="/js/components/doc-panel.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

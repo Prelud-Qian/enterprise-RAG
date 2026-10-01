@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS document (
 CREATE TABLE IF NOT EXISTS qa_log (
     id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
     user_id           BIGINT UNSIGNED NOT NULL COMMENT '提问用户 id',
-    kb_id             BIGINT UNSIGNED NOT NULL COMMENT '知识库 id',
+    kb_id             BIGINT UNSIGNED          DEFAULT NULL COMMENT '知识库 id（跨库问答为 NULL）',
     conversation_id   BIGINT UNSIGNED          DEFAULT NULL COMMENT '所属会话 id（多轮对话，单轮为空）',
     question          TEXT            NOT NULL COMMENT '用户提问',
     answer            TEXT            NOT NULL COMMENT '模型回答',
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS qa_log (
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS conversation (
     id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
-    kb_id      BIGINT UNSIGNED NOT NULL COMMENT '知识库 id',
+    kb_id      BIGINT UNSIGNED          DEFAULT NULL COMMENT '知识库 id（统一问答会话为 NULL）',
     user_id    BIGINT UNSIGNED NOT NULL COMMENT '会话归属用户',
     created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (id),
@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS conversation (
 
 -- 已建库升级：
 -- ALTER TABLE qa_log ADD COLUMN conversation_id BIGINT UNSIGNED DEFAULT NULL COMMENT '所属会话 id';
+-- 统一问答（/api/ask）：会话与问答日志的 kb_id 允许为空（单库问仍记录子库 id，跨库记 NULL）
+-- ALTER TABLE conversation MODIFY COLUMN kb_id BIGINT UNSIGNED NULL COMMENT '知识库 id（统一问答会话为 NULL）';
+-- ALTER TABLE qa_log       MODIFY COLUMN kb_id BIGINT UNSIGNED NULL COMMENT '知识库 id（跨库问答为 NULL）';
 
 -- ---------------------------------------------------------------------
 -- 初始化管理员：先注册普通用户，再执行下面语句提权
