@@ -186,8 +186,9 @@ public class ChunkingService {
              * 首句视作标题
              */
             if (first && treatFirstAsTitle && !headingLine && s.length() <= chunkSize) {
-                // 文档首句视作标题（level 0），写入路径根；超长首句按正文处理（硬切优先）
+                // 把 current 里之前攒的句子先存成一个块（current 为空则跳过，不产生空块）
                 flushBase(current, base, comps, currentStartsHeading);
+                // 开一个新的 current，把当前这句放进去 作为新块的首句
                 current = new StringBuilder(s);
                 currentStartsHeading = true;
                 comps[0] = s;
@@ -225,6 +226,12 @@ public class ChunkingService {
         flushBase(current, base, comps, currentStartsHeading);
         return base;
     }
+
+    /**
+     * current（StringBuilder）= 正在攒、还没完成的块的内容
+     * base（List）= 已经完成的块放的地方
+     * flushBase = "完成"这个动作：把 current 的内容 → 变成 BaseChunk → 加进 base → 清空 current
+     */
 
     /**
      * 把当前 StringBuilder 缓冲区里累积的文本"定型"成一个 BaseChunk 输出，然后清空缓冲区，准备攒下一段。

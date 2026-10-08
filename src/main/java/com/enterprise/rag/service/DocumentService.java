@@ -174,17 +174,38 @@ public class DocumentService {
             if (chunks.isEmpty()) {
                 throw new BusinessException("文档未解析出有效文本内容");
             }
+            /**
+             * 判断这份文档是"两级分块"还是"单级（退化）分块"，用一个布尔值记住
+             * chunks.get(0) — 取第一个块
+             * .parentIndex() — 它的父块序号。两级模式下 parentIndex 从 1 开始；单级退化模式下统一是 0
+             */
             boolean withParents = chunks.get(0).parentIndex() > 0;
 
-            // 【RAG-2.5】父块摘要（RAPTOR 简化版摘要树的上半场）：
-            // LLM 为每个父块生成一句话摘要，失败的单块跳过（检索侧自动降级）
+            /**
+             * 【RAG-2.5】父块摘要（RAPTOR 简化版摘要树的上半场）：
+             *  从子块列表里，统计出一共涉及哪几个父块，每个父块只登记一次。
+             *  LLM 为每个父块生成一句话摘要，失败的单块跳过（检索侧自动降级）
+             */
+            // summaryByIndex：key = 父块序号，value = 该父块的一句话摘要
             Map<Integer, String> summaryByIndex = new LinkedHashMap<>();
             if (withParents) {
+                // chunks 是子块列表 —— 同一个父块下面有多个子块，每个子块都带着相同的 parentIndex 和相同的 parent 文本。
+                // 这里目的是去重，得到"每个父块一份文本"：parentByIndex 的 key = 父块序号，value = 父块文本。
+                // putIfAbsent 表示"key 已存在就不放"——所以同一父块的第一个子块把它放进去，后面同序号的子块全部跳过。
                 Map<Integer, String> parentByIndex = new LinkedHashMap<>();
                 chunks.forEach(c -> parentByIndex.putIfAbsent(c.parentIndex(), c.parent()));
+                // 把 map 的 key 集合转成列表：父块序号列表
                 List<Integer> parentIdxList = new ArrayList<>(parentByIndex.keySet());
                 List<String> summaries = summaryService.summarize(
                         parentIdxList.stream().map(parentByIndex::get).toList());
+                /**
+                 * 拆开后：
+                 * List<String> parentTexts = new ArrayList<>();
+                 * for (Integer idx : parentIdxList) {
+                 *     parentTexts.add(parentByIndex.get(idx));
+                 * }
+                 * List<String> summaries = summaryService.summarize(parentTexts);
+                 */
                 for (int i = 0; i < parentIdxList.size(); i++) {
                     if (summaries.get(i) != null) {
                         summaryByIndex.put(parentIdxList.get(i), summaries.get(i));
@@ -192,19 +213,35 @@ public class DocumentService {
                 }
             }
 
-            // 【RAG-3】统一批量向量化：子块文本 + 摘要文本 一次任务队列分批调用 BGE-M3，
-            // 减少模型 API 往返次数（batch-size 防止单次请求过大触发限流）
+            /**
+             * 【RAG-3】统一批量向量化：子块文本 + 摘要文本 一次任务队列分批调用 BGE-M3，
+             * 减少模型 API 往返次数（batch-size 防止单次请求过大触发限流）
+             */
+            // 从 chunks 里取出每个子块的文本，得到子块文本列表  StructuredChunk::child 流元素自己当调用者，等价于 c -> c.child()
             List<String> childTexts = chunks.stream().map(ChunkingService.StructuredChunk::child).toList();
+            // 把 summaryByIndex 里所有 value（摘要文本）拷成一个列表
             List<String> summaryTexts = new ArrayList<>(summaryByIndex.values());
+            // 先拷贝子块文本
             List<String> allTexts = new ArrayList<>(childTexts);
+            // 再把摘要文本追加在后面
             allTexts.addAll(summaryTexts);
+            // 声明一个列表 allVectors，每个元素是一个 float[]（一条向量）
+            // allTexts.size() 是告诉它：先预留出能装这么多个 float[] 的空间
+            // 但此刻列表里是空的，没有真的东西，只是预设、预留
+            // 等后面的循环跑完，allTexts 里有多少个文本，allVectors 里就有多少个 float[]，一个文本对应一个 float[]，按顺序一一对应
             List<float[]> allVectors = new ArrayList<>(allTexts.size());
+            // 把配置文件里的"每批向量化多少条文本"读出来
             int batchSize = props.getEmbedding().getBatchSize();
+            // 循环 多批文本 每一批有多条文本 循环直到文本都被处理完为止
             for (int start = 0; start < allTexts.size(); start += batchSize) {
                 int end = Math.min(start + batchSize, allTexts.size());
+                // allTexts.subList(start, end)：从总文本列表里截出这一批（左闭右开：含 start，不含 end）
+                // embeddingService.embedBatch(...)：把这批文本发给接口，返回这批对应的向量列表
+                // allVectors.addAll(...)：把返回的向量追加到 allVectors 末尾
                 allVectors.addAll(embeddingService.embedBatch(allTexts.subList(start, end)));
                 log.info("文档[{}]向量化进度: {}/{} 文本", doc.getId(), end, allTexts.size());
             }
+            // 这两行是把 allVectors 切回两段，因为拼的时候是 前面为子块文本 后面为摘要文本 拼在一起向量化的
             List<float[]> childVectors = allVectors.subList(0, childTexts.size());
             List<float[]> summaryVectors = allVectors.subList(childTexts.size(), allVectors.size());
 
@@ -231,7 +268,9 @@ public class DocumentService {
                 summaryDao.insertBatch(summaryRecords);
             }
 
+            // 把分块得到的块数（chunks 的条数）写进 doc 对象的字段   这个值就是前端文档列表里"片段数"那一列显示的数字
             doc.setChunkCount(chunks.size());
+            // 把 doc 对象的状态字段改成 READY（已就绪）
             doc.setStatus(Document.STATUS_READY);
             documentMapper.updateById(doc);
 

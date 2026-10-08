@@ -32,6 +32,7 @@ public class SummaryService {
     public List<String> summarize(List<String> parentContents) {
         RagProperties.Summary s = props.getSummary();
         if (!s.getEnabled()) {
+            // 如果摘要功能关闭，直接返回一个和入参等长、全是 null 的 List。
             return parentContents.stream().map(x -> (String) null).toList();
         }
         List<String> result = new ArrayList<>(parentContents.size());

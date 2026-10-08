@@ -55,13 +55,19 @@ public class EmbeddingService {
 
     /** 批量向量化（文档入库时按 batch-size 分批调用） */
     public List<float[]> embedBatch(List<String> texts) {
+        // 模型接口不直接收字符串，要的是 TextSegment 类型
+        // .map(TextSegment::from)：每个字符串调一次 TextSegment.from(s)，String 换成 TextSegment
         List<TextSegment> segments = texts.stream().map(TextSegment::from).toList();
+        // embeddingModel.embedAll(segments) 批量把多个 TextSegment 转成 向量
         Response<List<Embedding>> response = withRetry(() -> embeddingModel.embedAll(segments));
         return response.content().stream()
                 .map(e -> checkDimension(e.vector()))
                 .toList();
     }
 
+    /**
+     * 校验一条向量的长度是不是配置的 1024 维，不是就抛异常，是就原样返回
+     */
     private float[] checkDimension(float[] vector) {
         if (vector == null || vector.length != props.getEmbedding().getDimension()) {
             throw new BusinessException(500,
