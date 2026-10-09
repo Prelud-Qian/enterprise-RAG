@@ -15,7 +15,7 @@
     <artifactId>enterprise-rag</artifactId>
     <version>1.0.0</version>
     <name>enterprise-rag</name>
-    <description>企业知识库 RAG 问答系统（面试作品集）</description>
+    <description>企业知识库 RAG 问答系统</description>
 
     <properties>
         <java.version>17</java.version>

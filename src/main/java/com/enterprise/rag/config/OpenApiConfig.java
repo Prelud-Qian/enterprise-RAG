@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Swagger API 文档：启动后访问 http://localhost:8080/swagger-ui.html，
+ * Swagger API 文档：启动后访问 http://localhost:9090/swagger-ui.html，
  * 右上角 Authorize 填入登录返回的 JWT 即可在线调试所有接口
  */
 @Configuration

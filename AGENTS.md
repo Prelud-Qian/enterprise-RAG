@@ -1,6 +1,6 @@
 # AGENTS.md — enterprise-RAG
 
-面试向企业知识库 RAG 问答系统。Spring Boot 3.3 + LangChain4j 1.7 + MySQL(业务) + PostgreSQL/pgvector(向量) + 通义千问/BGE-M3(OpenAI 兼容协议)。后端 RESTful + 内置单页前端（Vue3 + Element Plus，无构建，随 jar 托管）。
+企业知识库 RAG 问答系统。Spring Boot 3.3 + LangChain4j 1.7 + MySQL(业务) + PostgreSQL/pgvector(向量) + 通义千问/BGE-M3(OpenAI 兼容协议)。后端 RESTful + 内置单页前端（Vue3 + Element Plus，无构建，随 jar 托管）。
 
 ## 常用命令
 

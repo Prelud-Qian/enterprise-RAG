@@ -280,7 +280,7 @@ curl "http://localhost:9090/api/kb/1/qa-logs?page=1&size=10" \
 
 ---
 
-## 5. RBAC 权限验证（面试演示用）
+## 5. RBAC 权限验证
 
 权限分两档：**读**（检索/提问/文档列表）对所有登录用户开放；**管理**（建库/删库/传文档/删文档/日志审计）仅 owner 或 ADMIN。用 **admin** 建的知识库，换 **bob** 的 token：
 
