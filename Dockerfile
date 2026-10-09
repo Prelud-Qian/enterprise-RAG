@@ -10,5 +10,5 @@ RUN mvn package -DskipTests -q
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /app/target/enterprise-rag-1.0.0.jar app.jar
-EXPOSE 8080
+EXPOSE 9090
 ENTRYPOINT ["java", "-jar", "app.jar"]

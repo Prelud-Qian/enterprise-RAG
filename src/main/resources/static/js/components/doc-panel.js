@@ -9,7 +9,7 @@ window.DocPanel = {
             <span class="doc-head-name">{{ kbName }}</span>
             <span class="doc-head-count">共 {{ store.docTotal }} 个文档</span>
           </div>
-          <el-button type="primary" :icon="UploadFilled" @click="openDialog">上传文档</el-button>
+          <el-button v-if="canManageKb" type="primary" :icon="UploadFilled" @click="openDialog">上传文档</el-button>
         </div>
 
         <el-table :data="store.docs" v-loading="store.loadingDocs" size="default" class="doc-table">
@@ -32,13 +32,14 @@ window.DocPanel = {
           <el-table-column label="上传时间" width="170">
             <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="80" align="center">
+          <el-table-column v-if="canManageKb" label="操作" width="80" align="center">
             <template #default="{ row }">
               <el-button link type="danger" size="small" @click="removeDoc(row)">删除</el-button>
             </template>
           </el-table-column>
           <template #empty>
-            <el-empty description="这个知识库还没有文档，点右上角上传" :image-size="80" />
+            <el-empty :description="canManageKb ? '这个知识库还没有文档，点右上角上传' : '这个知识库还没有文档'"
+                      :image-size="80" />
           </template>
         </el-table>
 
@@ -48,7 +49,7 @@ window.DocPanel = {
                        @current-change="onPage" />
       </template>
 
-      <el-empty v-else description="请先在左侧选择或创建一个知识库" />
+      <el-empty v-else description="请先在左侧选择一个知识库" />
 
       <el-dialog v-model="dialogVisible" title="上传文档" width="540px"
                  :close-on-click-modal="false" :show-close="!uploading"
@@ -82,7 +83,7 @@ window.DocPanel = {
         <div class="up-row">
           <span class="up-label">目标知识库</span>
           <el-select v-model="targetKbId" placeholder="请选择知识库" class="up-select">
-            <el-option v-for="kb in store.kbs" :key="kb.id" :label="kb.name" :value="kb.id" />
+            <el-option v-for="kb in manageableKbs" :key="kb.id" :label="kb.name" :value="kb.id" />
           </el-select>
         </div>
 
@@ -141,6 +142,22 @@ window.DocPanel = {
     kbName() {
       const kb = RagStore.currentKb();
       return kb ? kb.name : '';
+    },
+    isAdmin() {
+      const u = RagStore.store.user;
+      return !!u && u.role === 'ADMIN';
+    },
+    /** 当前选中库是否可管理（决定上传/删除按钮显隐）——与服务端 requireManage 同口径 */
+    canManageKb() {
+      const kb = RagStore.currentKb();
+      const u = RagStore.store.user;
+      return !!kb && (this.isAdmin || (!!u && kb.ownerId === u.id));
+    },
+    /** 上传的目标库候选：自己是 owner 或 ADMIN 的库（后端只允许传到可管理的库） */
+    manageableKbs() {
+      if (this.isAdmin) return RagStore.store.kbs;
+      const u = RagStore.store.user;
+      return u ? RagStore.store.kbs.filter(k => k.ownerId === u.id) : [];
     }
   },
   watch: {

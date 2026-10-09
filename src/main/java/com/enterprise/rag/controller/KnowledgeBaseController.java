@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 知识库接口：创建 / 列表 / 详情 / 删除（数据隔离在 Service 层校验 owner_id）
+ * 知识库接口：创建 / 列表 / 详情 / 删除
+ * （读接口全用户开放；创建限 ADMIN、删除校验 owner/ADMIN，均在 Service 层）
  */
 @RestController
 @RequestMapping("/api/kb")
@@ -33,7 +34,7 @@ public class KnowledgeBaseController {
 
     @GetMapping
     public Result<List<KnowledgeBaseVO>> list() {
-        return Result.ok(knowledgeBaseService.listMine());
+        return Result.ok(knowledgeBaseService.list());
     }
 
     @GetMapping("/{id}")

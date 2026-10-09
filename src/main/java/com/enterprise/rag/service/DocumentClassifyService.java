@@ -27,13 +27,13 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 上传前文档自动分类：Tika 取样文档开头 → LLM 从当前用户可见的知识库中选一个。
+ * 上传前文档自动分类：Tika 取样文档开头 → LLM 从当前用户可管理的知识库中选一个。
  * <p>
  * 不变量 6：LLM 失败只降级为「不推荐」，接口本身不 500 —— 分类是上传的前置便利步骤，
  * 不能因为它挂了就让人传不了文档。只有文件本身非法（扩展名/空/超限）才抛 400，
  * 规则读的是 rag.upload 同一份配置，与上传接口保持一致。
  * <p>
- * 本接口不针对某个 kb 操作，只读当前用户可见的库列表，因此不走 requireAccess。
+ * 本接口不针对某个 kb 操作，只读可管理的库列表（候选库必须能上传），因此不做单库权限校验。
  */
 @Service
 @RequiredArgsConstructor
@@ -69,9 +69,9 @@ public class DocumentClassifyService {
     public ClassifyVO classify(MultipartFile file) {
         String fileName = validate(file);
 
-        List<KnowledgeBaseVO> candidates = knowledgeBaseService.listMine();
+        List<KnowledgeBaseVO> candidates = knowledgeBaseService.listManageable();
         if (candidates.isEmpty()) {
-            return ClassifyVO.degraded("你还没有知识库，请先创建知识库再上传文档");
+            return ClassifyVO.degraded("暂无可管理的知识库，请联系管理员创建后再上传文档");
         }
         if (!Boolean.TRUE.equals(props.getClassify().getEnabled())) {
             return ClassifyVO.degraded("自动分类已关闭，请手动选择知识库");
@@ -83,7 +83,7 @@ public class DocumentClassifyService {
         }
         int maxCandidates = props.getClassify().getMaxCandidates();
         if (candidates.size() > maxCandidates) {
-            candidates = candidates.subList(0, maxCandidates);   // listMine 已按创建时间倒序
+            candidates = candidates.subList(0, maxCandidates);   // listManageable 已按创建时间倒序
         }
 
         String sample = sampleText(file, fileName);

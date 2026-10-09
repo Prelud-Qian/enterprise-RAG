@@ -1,14 +1,14 @@
-/** 侧边栏：知识库列表 / 新建 / 删除 / 切换。所有按 kb 的接口在服务端都会再校验一次归属 */
+/** 侧边栏：知识库列表 / 新建 / 删除 / 切换。读开放给全部用户；新建限 ADMIN、删除校验 owner/ADMIN（服务端兜底） */
 window.KbPanel = {
   template: `
     <div class="kb-panel">
       <div class="kb-head">
         <span class="kb-head-title">知识库</span>
-        <el-button type="primary" link :icon="Plus" @click="openCreate">新建</el-button>
+        <el-button v-if="isAdmin" type="primary" link :icon="Plus" @click="openCreate">新建</el-button>
       </div>
 
       <div class="kb-list">
-        <el-empty v-if="!store.kbs.length" description="还没有知识库" :image-size="60" />
+        <el-empty v-if="!store.kbs.length" description="暂无知识库" :image-size="60" />
         <div v-for="kb in store.kbs" :key="kb.id"
              class="kb-item" :class="{ active: kb.id === store.currentKbId }"
              @click="select(kb)">
@@ -17,7 +17,7 @@ window.KbPanel = {
             <div class="kb-item-name">{{ kb.name }}</div>
             <div class="kb-item-desc">{{ kb.description || '暂无描述' }}</div>
           </div>
-          <el-icon class="kb-item-del" @click.stop="remove(kb)"><Delete /></el-icon>
+          <el-icon v-if="canManage(kb)" class="kb-item-del" @click.stop="remove(kb)"><Delete /></el-icon>
         </div>
       </div>
 
@@ -55,9 +55,18 @@ window.KbPanel = {
   computed: {
     store() {
       return RagStore.store;
+    },
+    isAdmin() {
+      const u = RagStore.store.user;
+      return !!u && u.role === 'ADMIN';
     }
   },
   methods: {
+    /** 当前用户能否管理该库（本人是 owner 或 ADMIN）——与服务端 requireManage 同口径 */
+    canManage(kb) {
+      const u = RagStore.store.user;
+      return this.isAdmin || (!!u && kb.ownerId === u.id);
+    },
     select(kb) {
       RagStore.store.currentKbId = kb.id;
     },

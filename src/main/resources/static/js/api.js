@@ -148,23 +148,20 @@
   }
 
   /**
-   * 流式提问。后端事件序列：meta(会话 id) → message(token) × N → sources(SourceVO[]) → 关闭。
+   * 流式提问公共实现（统一问答 / 按库问答共用）。后端事件序列：meta(会话 id) → message(token) × N → sources(SourceVO[]) → 关闭。
    * 流中的错误走 onError 回调；只有「流还没起来就失败」（未登录 401 / 会话 404 / 未创建知识库 400 / 限流 429）
    * 才 throw —— 那时后端返回的是普通 JSON，不是 SSE。
    */
-  async function askStream(question, conversationId, handlers, signal) {
+  async function streamAsk(url, body, handlers, signal) {
     const cb = handlers || {};
 
-    const res = await fetch('/api/ask/stream', {
+    const res = await fetch(url, {
       method: 'POST',
       headers: authHeaders({
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream'
       }),
-      body: JSON.stringify({
-        question: question,
-        conversationId: conversationId == null ? null : conversationId
-      }),
+      body: JSON.stringify(body),
       signal: signal
     });
 
@@ -219,6 +216,22 @@
     }
   }
 
+  /** 统一问答（自动选库）：POST /api/ask/stream */
+  function askStream(question, conversationId, handlers, signal) {
+    return streamAsk('/api/ask/stream', {
+      question: question,
+      conversationId: conversationId == null ? null : conversationId
+    }, handlers, signal);
+  }
+
+  /** 按库问答（指定知识库）：POST /api/kb/{kbId}/ask/stream，事件与统一问答完全一致 */
+  function askStreamKb(kbId, question, conversationId, handlers, signal) {
+    return streamAsk('/api/kb/' + kbId + '/ask/stream', {
+      question: question,
+      conversationId: conversationId == null ? null : conversationId
+    }, handlers, signal);
+  }
+
   /* ==================== 业务接口 ==================== */
 
   const api = {
@@ -263,7 +276,8 @@
       return request('/api/documents/upload', { method: 'POST', body: fd, isForm: true, signal });
     },
 
-    askStream
+    askStream,
+    askStreamKb
   };
 
   global.RagApi = api;

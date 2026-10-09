@@ -1,6 +1,6 @@
 # enterprise-RAG — 企业知识库 RAG 问答系统
 
-基于 SpringBoot 3 + LangChain4j + pgvector 的面试向企业知识库问答系统，覆盖 RAG 完整链路：**文档解析 → 标题感知两级分块（章节溯源）→ 父块摘要树 → 向量化入库 → 混合检索（摘要定范围 + 向量 + BM25 → RRF → 精排）→ Prompt 组装 → LLM 生成 → 溯源审计**，附带幻觉兜底与 RBAC 数据隔离。
+基于 SpringBoot 3 + LangChain4j + pgvector 的企业知识库问答系统，覆盖 RAG 完整链路：**文档解析 → 标题感知两级分块（章节溯源）→ 父块摘要树 → 向量化入库 → 混合检索（摘要定范围 + 向量 + BM25 → RRF → 精排）→ Prompt 组装 → LLM 生成 → 溯源审计**，附带幻觉兜底与 RBAC 权限控制。
 
 ## 项目背景（业务叙事）
 
@@ -13,8 +13,8 @@
 - [RAG 核心链路](#rag-核心链路)
 - [快速开始](#快速开始)
 - [接口清单](#接口清单)
-- [技术选型对比（面试素材）](#技术选型对比面试素材)
-- [坑与优化点（面试素材）](#坑与优化点面试素材)
+- [技术选型对比](#技术选型对比)
+- [坑与优化点](#坑与优化点)
 - [项目结构](#项目结构)
 
 ## 技术栈
@@ -65,7 +65,7 @@
           └──────────────────────┘
 ```
 
-**知识库隔离设计**：`knowledge_base.owner_id` 是隔离核心，所有按知识库操作的 Service 入口统一走 `KnowledgeBaseService.requireAccess()`（非 owner 且非 ADMIN → 403）；pgvector 检索 SQL 强制带 `kb_id` 过滤，存储层兜底。
+**RBAC 权限模型**：读（问答/文档查看）对所有登录用户开放，入口走 `KnowledgeBaseService.requireRead()`（仅校验存在性 → 404）；管理（建库/删库/上传文档/删除文档）限 owner 或 ADMIN，走 `requireManage()`（403），建库再限 ADMIN；pgvector 检索 SQL 强制带 `kb_id` 过滤，存储层兜底防跨库串数据。
 
 ## RAG 核心链路
 
@@ -87,8 +87,8 @@
 
 ```
 提问
-  → ⓪ 知识库路由（仅 /api/ask：LLM 从我的知识库中选 ≤3 个最相关库；单库直通、失败降级全部库）
-  → ① 权限校验（requireAccess：kb 与用户绑定，检索前拦截）
+  → ⓪ 知识库路由（仅 /api/ask：LLM 从全部知识库中选 ≤3 个最相关库；单库直通、失败降级全部库）
+  → ① 权限校验（requireRead：库存在性校验，读对所有登录用户开放）
   → ② Query 改写（LLM 多查询，失败降级原问题）
   → ③ 摘要树检索（先搜父块摘要定范围 → 范围内子块向量 Top10）
        + BM25 Top10（含命中词记录）→ RRF 跨查询融合
@@ -119,7 +119,7 @@
 
 BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排索引（term → postings）→ BM25 公式（k1=1.5, b=0.75），索引按知识库懒加载、文档变更后整体重建。
 
-## 检索评测（面试数据来源）
+## 检索评测
 
 `docs/eval/` 提供检索评测脚本（Python3 标准库，无需 pip），流程：
 
@@ -130,7 +130,7 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
    ```
 3. 输出每条问题的 HIT/MISS 明细 + 汇总报告：**Hit@5 命中率、平均 maxSimilarity、平均检索耗时**
 
-拿到数据后可以做三组对比实验（面试核心素材）：
+拿到数据后可以做三组对比实验：
 - 纯向量 vs 纯 BM25 vs 混合检索的 Hit@5 对比（验证混合检索价值）
 - 不同分块大小/重叠度对比（回答"分块参数怎么定的"）
 - 开启/关闭 Rerank 精排对比（回答"精排带来了多少提升"）
@@ -160,7 +160,7 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 
 **⑥ 性能**：首问冷启动 ~93s（jieba 词典加载 + BM25 索引构建 + Query 改写），稳态 **5~7s/问**（Query 改写 + Rerank 两次 LLM 调用是延迟大头；低延迟场景可关 `rag.retrieval.query-rewrite.enabled` 或换更小模型）。
 
-**⑦ RBAC 与全局异常**（接口扫描 23/23 通过）：bob 对 admin 的知识库做检索/提问/文档/日志访问全部 **403**（`requireAccess` 在检索之前拦截，未进入检索阶段）；存储层 pgvector SQL 强制 `kb_id` 过滤（admin 检索结果 docId 全部属于她自己的库）；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
+**⑦ RBAC 与全局异常**：读（检索/提问/文档列表）对所有登录用户开放——bob 可以读 admin 的知识库（200）；管理动作受限——bob 对 admin 的库做删库/传文档/删文档/日志审计一律 **403**（`requireManage` 拦截），建库限 ADMIN；存储层 pgvector SQL 强制 `kb_id` 过滤兜底；无/非法 token → 401、参数校验 → 400、不存在资源 → 404，全部统一 `Result` 结构；完整 Postman 集合见 [docs/postman/enterprise-rag.postman_collection.json](docs/postman/enterprise-rag.postman_collection.json)。
 
 **⑧ RAGFlow 三件套验证**（2026-09-18）：① 标题感知分块把 4 份语料从 8 块切到 **41 块**（每"条"独立成块），search 响应带章节路径（如"第三章 考勤与休假 > 第五条 …"）与 BM25 命中词；② chunk_summary 摘要表每父块一行（12/12 章节路径覆盖）；③ 新链路回归评测 **Hit@5 保持 100%**，平均相似度 0.654 → **0.712**（更细分块定位更准）。期间模型 API 6 次瞬时超时均被 LangChain4j 重试恢复，未影响任何请求。
 
@@ -193,13 +193,13 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 - **幻觉三重防线**：检索质量阈值兜底（不调 LLM 直接拒绝）→ Prompt 强约束 → 低温度生成，库外问题实测 100% 拒绝编造
 - **small-to-big 两级分块**：500 字子块保证检索定位精度，2000 字父块保证喂给 LLM 的上下文完整，同父块去重
 - **对标 RAGFlow 的三件套**：① 标题感知分块 + 章节级溯源（"员工手册 > 第三章 考勤与休假 > 第五条"）；② BM25 命中词返回（可解释"为什么召回这块"）；③ RAPTOR 简化版摘要树（先搜摘要定范围再精检子块，两级检索）
-- **RBAC 检索阶段过滤**：权限校验在检索之前拦截 + pgvector SQL 层 `kb_id` 兜底，双保险，越权请求进不了检索阶段
+- **RBAC 读写分权**：读（问答/文档）开放给全部登录用户，管理（建库/删库/传文档）限 owner 或 ADMIN——`requireRead`/`requireManage` 双入口 + pgvector SQL 层 `kb_id` 兜底防串库
 - **双数据源工程实践**：MySQL 业务 + PG 向量无分布式事务，用文档状态机 + 失败补偿保证最终一致（三个真实踩坑已文档化）
 - **模型供应商可插拔**：OpenAI 兼容协议，硅基流动/百炼换 base-url + model 即切；Rerank 双协议兼容
-- **数据说话**：20 单测 / 接口扫描 23/23 / 冒烟 8/8 / 检索评测 Hit@5=100% / 对比实验（混合比纯向量 +10 个百分点）/ 并发压测（服务层 3225 QPS），评测体系可复现（docs/eval/）
+- **数据说话**：32 单测 / 接口扫描 23/23 / 冒烟 8/8 / 检索评测 Hit@5=100% / 对比实验（混合比纯向量 +10 个百分点）/ 并发压测（服务层 3225 QPS），评测体系可复现（docs/eval/）
 - **多轮对话**：会话级历史上下文，纯指代追问可答、越权会话 404、审计日志按会话归组
 - **可观测性与 CI**：Actuator 健康检查/指标端点 + GitHub Actions 自动跑单测
-- **手写核心不做黑盒**：BM25 倒排索引、pgvector SQL、语义分块全部手写，面试能讲清每一行原理
+- **手写核心不做黑盒**：BM25 倒排索引、pgvector SQL、语义分块全部手写，每一行原理透明可讲
 
 ## 快速开始
 
@@ -215,7 +215,7 @@ export DASHSCOPE_API_KEY=sk-xxx         # Linux/Mac
 docker compose up -d --build
 ```
 
-自动完成：起 MySQL 8 + pgvector（内置 vector 扩展）两个容器并执行建表脚本，再构建并启动应用容器。应用启动后直接调 `http://localhost:8080`。
+自动完成：起 MySQL 8 + pgvector（内置 vector 扩展）两个容器并执行建表脚本，再构建并启动应用容器。应用启动后直接调 `http://localhost:9090`。
 
 ### 方式二：服务放 VMware 虚拟机（实际部署形态，已跑通）
 
@@ -245,7 +245,7 @@ mvn spring-boot:run
    ```bash
    mvn spring-boot:run
    ```
-4. **调接口**：见 [docs/postman-examples.md](docs/postman-examples.md)，含上传、问答溯源、流式、兜底、RBAC 越权全套演示；或打开 Swagger UI `http://localhost:8080/swagger-ui.html` 在线调试
+4. **调接口**：见 [docs/postman-examples.md](docs/postman-examples.md)，含上传、问答溯源、流式、兜底、RBAC 越权全套演示；或打开 Swagger UI `http://localhost:9090/swagger-ui.html` 在线调试
 
 ## 接口清单
 
@@ -270,15 +270,15 @@ mvn spring-boot:run
 | GET | /api/kb/{kbId}/qa-logs | 问答日志分页（审计） |
 | GET | /api/admin/users | 用户列表（仅 ADMIN，RBAC 验证） |
 
-> 启动后可打开 Swagger UI 在线调试全部接口：`http://localhost:8080/swagger-ui.html`（右上角 Authorize 填 JWT）
+> 启动后可打开 Swagger UI 在线调试全部接口：`http://localhost:9090/swagger-ui.html`（右上角 Authorize 填 JWT）
 
-## 技术选型对比（面试素材）
+## 技术选型对比
 
 > 五道必考题的口述版答案（分块权衡 / pgvector 选型 / 混合检索 / 幻觉抑制 / RAG vs 微调）见 **[docs/interview-notes.md](docs/interview-notes.md)**
 
 ### 1. 向量库：pgvector vs Milvus / Chroma
 
-- **选 pgvector 的理由**：数据量百万级向量以内性能足够（HNSW 索引）；不需要额外运维一套独立中间件；向量与元数据同库，检索时直接 JOIN，还能用 SQL 事务/备份生态；面试能讲清 `<=>` 余弦距离、HNSW/IVFFlat 原理
+- **选 pgvector 的理由**：数据量百万级向量以内性能足够（HNSW 索引）；不需要额外运维一套独立中间件；向量与元数据同库，检索时直接 JOIN，还能用 SQL 事务/备份生态；底层 `<=>` 余弦距离、HNSW/IVFFlat 索引直接可控
 - **Milvus**：十亿级向量、分布式场景才需要，单机部署成本高（依赖 etcd/MinIO）
 - **Chroma**：Python 生态，Java SDK 不成熟，生产化程度低
 
@@ -296,13 +296,13 @@ mvn spring-boot:run
 
 ### 4. 关键词检索：内存倒排 + 手写 BM25 vs Elasticsearch
 
-- 零额外中间件，代码 200 行讲清 BM25 公式与倒排结构，面试展示理解深度
+- 零额外中间件，代码 200 行讲清 BM25 公式与倒排结构，实现原理完全透明
 - ES 的 BM25 生产级但多一套集群运维，且与固定技术栈（MySQL+PG）冲突
 - 明确边界：chunk 数超过十万级或需要多副本高可用时，迁移 pg_search（ParadeDB）或 ES，索引结构与检索接口已抽象（`Bm25IndexService`），替换成本低
 
 ### 5. 向量库操作：手写 JdbcTemplate vs LangChain4j PgVectorEmbeddingStore
 
-- 框架封装表结构固定（metadata 塞 JSONB），按知识库隔离的过滤能力弱，且面试时讲不清底层 SQL
+- 框架封装表结构固定（metadata 塞 JSONB），按知识库隔离的过滤能力弱，底层 SQL 不可控
 - 手写 SQL：表结构自控（kb_id 隔离列、doc_id 溯源列独立索引），能演示 HNSW 建索引、`<=>` 算子、批量写入优化
 - LangChain4j 在项目中只做模型接入层（ChatLanguageModel / EmbeddingModel），职责单一
 
@@ -312,7 +312,7 @@ mvn spring-boot:run
 - base-url 可配置，换硅基流动/本地 vLLM/Ollama 等任何兼容端点零代码改动 —— 这就是协议标准化的价值
 - LangChain4j 的 dashscope 原生模块也可用，但只覆盖千问、API 随版本变动大
 
-## 坑与优化点（面试素材）
+## 坑与优化点
 
 ### 踩过的坑
 
@@ -328,7 +328,7 @@ mvn spring-boot:run
 10. **Lombok + Jackson 的 is 前缀陷阱**：`private boolean isFallback` 生成的 getter 是 `isFallback()`，Jackson 会序列化成 `"fallback"` 而非 `"isFallback"` → 用 `@JsonProperty` 固定字段名
 11. **PG DDL 不能用 MySQL 风格行内注释**：`COMMENT '...'` 在 PG 里是语法错误，要用 `--` 注释
 
-### 优化方向（面试可说）
+### 优化方向
 
 1. **混合检索融合调优**：RRF 常数 k 与两路 TopK 配比可离线调参；Rerank 候选数 topN 是成本与效果的平衡点；进阶可换加权融合/学习排序（LTR）
 2. **BM25 索引演进**：懒加载全量重建 → 增量更新；加读写锁/双 buffer 替换去掉 synchronized 串行；超大规模迁 pg_search/ES

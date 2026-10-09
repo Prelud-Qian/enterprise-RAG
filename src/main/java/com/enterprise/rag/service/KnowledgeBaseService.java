@@ -18,7 +18,8 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * 知识库管理 + 数据隔离核心
+ * 知识库管理 + 读写权限校验：
+ * 读（问答/文档查看/详情）对所有登录用户开放；管理（建库/删库/传文档/删文档）限 owner 或 ADMIN
  */
 @Service
 @RequiredArgsConstructor
@@ -30,8 +31,12 @@ public class KnowledgeBaseService {
     private final SummaryDao summaryDao;
     private final Bm25IndexService bm25IndexService;
 
+    /** 建库限 ADMIN：普通用户是查询角色，知识库统一由管理员维护 */
     public KnowledgeBaseVO create(KbRequest req) {
         LoginUser user = SecurityUtil.currentUser();
+        if (!"ADMIN".equals(user.role())) {
+            throw new BusinessException(403, "仅管理员可创建知识库");
+        }
         KnowledgeBase kb = new KnowledgeBase();
         kb.setName(req.getName());
         kb.setDescription(req.getDescription());
@@ -40,8 +45,14 @@ public class KnowledgeBaseService {
         return KnowledgeBaseVO.from(kb);
     }
 
-    /** 普通用户只看自己的知识库，ADMIN 看全部 */
-    public List<KnowledgeBaseVO> listMine() {
+    /** 全部知识库（所有登录用户可见，按创建时间倒序）：列表接口与统一问答路由候选共用 */
+    public List<KnowledgeBaseVO> list() {
+        LambdaQueryWrapper<KnowledgeBase> wrapper =
+                new LambdaQueryWrapper<KnowledgeBase>().orderByDesc(KnowledgeBase::getCreatedAt);
+        return knowledgeBaseMapper.selectList(wrapper).stream().map(KnowledgeBaseVO::from).toList();
+    }
+
+    public List<KnowledgeBaseVO> listManageable() {
         LoginUser user = SecurityUtil.currentUser();
         LambdaQueryWrapper<KnowledgeBase> wrapper =
                 new LambdaQueryWrapper<KnowledgeBase>().orderByDesc(KnowledgeBase::getCreatedAt);
@@ -52,11 +63,11 @@ public class KnowledgeBaseService {
     }
 
     public KnowledgeBaseVO getById(Long id) {
-        return KnowledgeBaseVO.from(requireAccess(id));
+        return KnowledgeBaseVO.from(requireRead(id));
     }
 
     public void delete(Long id) {
-        requireAccess(id);
+        requireManage(id);
         // 级联清理：文档元数据 → pgvector 片段与摘要 → 知识库本体
         List<Document> docs = documentMapper.selectList(
                 new LambdaQueryWrapper<Document>().eq(Document::getKbId, id));
@@ -68,18 +79,26 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 知识库访问权限校验（RBAC 数据隔离核心）：
-     * 不存在 → 404；非 owner 且非 ADMIN → 403。
-     * 文档上传/问答/日志等所有按知识库操作的入口都必须先过这里
+     * 读权限：不存在 → 404；存在即可（登录由 Security 层保证，读对所有登录用户开放）。
+     * 问答/文档列表/库详情等只读入口过这里
      */
-    public KnowledgeBase requireAccess(Long kbId) {
+    public KnowledgeBase requireRead(Long kbId) {
         KnowledgeBase kb = knowledgeBaseMapper.selectById(kbId);
         if (kb == null) {
             throw new BusinessException(404, "知识库不存在");
         }
+        return kb;
+    }
+
+    /**
+     * 管理权限（RBAC 核心）：不存在 → 404；非 owner 且非 ADMIN → 403。
+     * 删库/上传文档/删文档/日志审计等写入口过这里
+     */
+    public KnowledgeBase requireManage(Long kbId) {
+        KnowledgeBase kb = requireRead(kbId);
         LoginUser user = SecurityUtil.currentUser();
         if (!"ADMIN".equals(user.role()) && !kb.getOwnerId().equals(user.id())) {
-            throw new BusinessException(403, "无权访问该知识库");
+            throw new BusinessException(403, "无权操作该知识库");
         }
         return kb;
     }

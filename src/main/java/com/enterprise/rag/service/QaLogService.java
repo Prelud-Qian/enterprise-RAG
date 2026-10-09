@@ -54,7 +54,8 @@ public class QaLogService {
     }
 
     public PageVO<QaLogVO> page(Long kbId, long page, long size) {
-        knowledgeBaseService.requireAccess(kbId);
+        // 审计日志含他人问答原文，保持管理权限（owner/ADMIN）
+        knowledgeBaseService.requireManage(kbId);
         Page<QaLog> p = qaLogMapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<QaLog>()
                         .eq(QaLog::getKbId, kbId)

@@ -76,8 +76,8 @@ public class DocumentService {
          * 按 rag.upload.async 分发处理，返回 VO
      */
     public DocumentVO upload(Long kbId, MultipartFile file, Integer chunkSizeParam, Integer chunkOverlapParam) {
-        // 权限校验：只能给自己的知识库传文档
-        knowledgeBaseService.requireAccess(kbId);
+        // 权限校验：上传是写操作，仅 owner/ADMIN 可向该库传文档
+        knowledgeBaseService.requireManage(kbId);
         LoginUser user = SecurityUtil.currentUser();
 
         // 文件校验：文件名清洗（防路径穿越）、扩展名白名单、大小限制
@@ -295,7 +295,8 @@ public class DocumentService {
     }
 
     public PageVO<DocumentVO> page(Long kbId, long page, long size) {
-        knowledgeBaseService.requireAccess(kbId);
+        // 读权限：文档列表对所有登录用户开放
+        knowledgeBaseService.requireRead(kbId);
         Page<Document> p = documentMapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<Document>()
                         .eq(Document::getKbId, kbId)
@@ -310,7 +311,8 @@ public class DocumentService {
         if (doc == null) {
             throw new BusinessException(404, "文档不存在");
         }
-        knowledgeBaseService.requireAccess(doc.getKbId());
+        // 删除是写操作：仅 owner/ADMIN
+        knowledgeBaseService.requireManage(doc.getKbId());
         // 先删向量片段与摘要再删元数据，随后重建 BM25 索引
         vectorStoreDao.deleteByDocId(docId);
         summaryDao.deleteByDocId(docId);

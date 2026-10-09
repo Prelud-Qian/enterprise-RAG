@@ -99,7 +99,7 @@ class QaServiceTest {
     @Test
     @DisplayName("统一接口流式：检索失败同样先抛异常、不发任何 SSE 事件")
     void 统一接口检索失败不发送事件() throws Exception {
-        when(knowledgeBaseService.listMine()).thenReturn(List.of(kb(1L, "A"), kb(2L, "B")));
+        when(knowledgeBaseService.list()).thenReturn(List.of(kb(1L, "A"), kb(2L, "B")));
         when(knowledgeRouterService.route(anyString(), anyString(), anyList())).thenReturn(List.of(1L, 2L));
         when(retrievalService.retrieve(anyList(), anyString()))
                 .thenThrow(new RuntimeException("embedding 服务不可用"));

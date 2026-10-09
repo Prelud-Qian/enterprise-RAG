@@ -4,7 +4,7 @@
 RAG 检索评测脚本（Python3 标准库实现，无需 pip 安装任何依赖）
 
 用法:
-    python eval.py --base http://localhost:8080 --token <JWT> --kb 1 --k 5
+    python eval.py --base http://localhost:9090 --token <JWT> --kb 1 --k 5
 
 标注集格式（eval_set.jsonl，每行一条 JSON）:
     {"question": "员工年假有多少天？", "docId": 1, "chunkIndex": 12}
@@ -36,7 +36,7 @@ def search(base_url, token, kb_id, question, timeout=60):
 
 def main():
     parser = argparse.ArgumentParser(description="RAG 检索评测")
-    parser.add_argument("--base", default="http://localhost:8080")
+    parser.add_argument("--base", default="http://localhost:9090")
     parser.add_argument("--token", required=True, help="登录接口返回的 JWT")
     parser.add_argument("--kb", type=int, required=True, help="知识库 id")
     parser.add_argument("--k", type=int, default=5, help="Top-K 命中判定")

@@ -63,10 +63,11 @@ public class QaService {
     public AskResponse ask(Long kbId, String question, Long conversationId) {
         // 记开始时间，最后算耗时
         long start = System.currentTimeMillis();
-        // 知识库隔离校验
-        knowledgeBaseService.requireAccess(kbId);
-        // 接口限流：/ask 每请求消耗 2~3 次 LLM 调用，防 key 被刷烧钱
+        // 读权限校验：库存在即可（读对所有登录用户开放）
+        knowledgeBaseService.requireRead(kbId);
+        // 从当前请求线程绑定的登录信息里取出用户 id，后面限流和会话都要用
         Long userId = SecurityUtil.currentUser().id();
+        // 接口限流：/ask 每请求消耗 2~3 次 LLM 调用，防 key 被刷烧钱
         rateLimitService.checkAsk(userId);
 
         // 【问答-0】多轮对话：解析会话（新会话建档；已存在会话校验归属并取最近几轮历史）
@@ -74,7 +75,7 @@ public class QaService {
         return doAsk(question, convCtx, List.of(kbId), start, userId);
     }
 
-    /** 统一问答（跨库路由）：不指定知识库，由 KnowledgeRouterService 从当前用户可见库中选 */
+    /** 统一问答（跨库路由）：不指定知识库，由 KnowledgeRouterService 从全部知识库中选 */
     public AskResponse ask(String question, Long conversationId) {
         long start = System.currentTimeMillis();
         Long userId = SecurityUtil.currentUser().id();
@@ -189,11 +190,11 @@ public class QaService {
         return new ConversationContext(conv.getId(), "");
     }
 
-    /** 路由选库：候选来自 listMine（天然白名单，客户端无法注入 kbId）；一个库都没有时直接报错 */
+    /** 路由选库：候选来自全部知识库（服务端取列表，客户端无法注入 kbId）；系统一个库都没有时直接报错 */
     private List<Long> route(String question, String history) {
-        List<KnowledgeBaseVO> candidates = knowledgeBaseService.listMine();
+        List<KnowledgeBaseVO> candidates = knowledgeBaseService.list();
         if (candidates.isEmpty()) {
-            throw new BusinessException(400, "尚未创建知识库，请先在「资料管理」中创建并上传文档");
+            throw new BusinessException(400, "系统尚未创建知识库，请联系管理员创建并上传文档");
         }
         return knowledgeRouterService.route(question, history, candidates);
     }
@@ -233,12 +234,12 @@ public class QaService {
     // 和 ask 走同一条链路（检索 → 兜底 → 组装 prompt → 调 LLM → 溯源 → 审计），区别只有一个：答案边生成边推送，不等全部生成完。
     public void askStream(Long kbId, String question, Long conversationId, SseEmitter emitter) {
         long start = System.currentTimeMillis();
-        knowledgeBaseService.requireAccess(kbId);
+        knowledgeBaseService.requireRead(kbId);
         // 限流与 userId 都必须在请求线程取：SSE 回调跑在 langchain4j 的线程池上，那里读不到 SecurityContext
         Long userId = SecurityUtil.currentUser().id();
         rateLimitService.checkAsk(userId);
         // 会话解析同样在请求线程做（新会话要写库）。此刻 emitter 还没 initialize，
-        // 抛出的 404 照走 GlobalExceptionHandler 返回 JSON —— 和 requireAccess/checkAsk 是同一条通道
+        // 抛出的 404 照走 GlobalExceptionHandler 返回 JSON —— 和 requireRead/checkAsk 是同一条通道
         ConversationContext conv = resolveConversation(kbId, userId, conversationId);
         // 检索也放在首个 SSE 事件之前：embedding/DB 异常时响应尚未提交，照走同一条 JSON 错误通道
         RetrievalResult retrieval = retrievalService.retrieve(List.of(kbId), question);
@@ -374,7 +375,7 @@ public class QaService {
 
     /** 仅检索（不调 LLM）：检索调试与评测脚本使用，不落问答日志 */
     public SearchResponse search(Long kbId, String question) {
-        knowledgeBaseService.requireAccess(kbId);
+        knowledgeBaseService.requireRead(kbId);
         rateLimitService.checkSearch(SecurityUtil.currentUser().id());
         RetrievalResult retrieval = retrievalService.retrieve(kbId, question);
         List<SourceVO> sources = retrieval.chunks().stream().map(this::toSource).toList();

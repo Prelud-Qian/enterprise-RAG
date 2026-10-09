@@ -55,7 +55,7 @@
 
 ## 第 2 天：Embedding 与向量检索（地基中的地基）
 
-> 📖 今天读：`service/EmbeddingService.java:29-73`（embed/embedBatch/维度校验/重试）、`dao/pg/VectorStoreDao.java:52-70`（searchByKb 的 `<=>` SQL）。IDE 里 Ctrl+G 输入行号直接跳。
+> 📖 今天读：`service/EmbeddingService.java:42-94`（embed/embedBatch/维度校验/重试）、`dao/pg/VectorStoreDao.java:54-68`（searchByKbs 的 `<=>` SQL）。IDE 里 Ctrl+G 输入行号直接跳。
 
 ### 概念（大白话）
 
@@ -76,12 +76,12 @@
 - `withRetry`：模型 API 偶尔超时/限流，自动重试 2 次（指数退避 1s/2s）——**所有外部依赖都要有重试或降级，这是本项目贯穿始终的设计**
 - `checkDimension`：校验返回确实是 1024 维——防止配错模型（比如配了个 512 维的）导致入库和查询的空间不一致
 
-**`VectorStoreDao.searchByKb`**（`dao/pg/VectorStoreDao.java`）——向量检索的 SQL，全项目最该背的一行：
+**`VectorStoreDao.searchByKbs`**（`dao/pg/VectorStoreDao.java`）——向量检索的 SQL，全项目最该背的一行：
 
 ```sql
 SELECT ..., 1 - (c.embedding <=> CAST(:embedding AS vector)) AS similarity
 FROM document_chunk c
-WHERE c.kb_id = :kbId          -- 知识库隔离：只查当前用户的库
+WHERE c.kb_id IN (:kbIds)      -- 知识库隔离：只查白名单内的库（服务端解析）
 ORDER BY c.embedding <=> CAST(:embedding AS vector)
 LIMIT :topK
 ```
@@ -89,7 +89,7 @@ LIMIT :topK
 - `<=>` 是 **pgvector 扩展提供的余弦距离运算符**：距离越小越相似
 - `1 - 距离` = 余弦相似度（0~1，越大越相似）
 - `ORDER BY 距离 LIMIT 10` = 取最相似的 10 块（Top10）
-- `WHERE kb_id` 是数据隔离在存储层的兜底（权限章节会再讲）
+- `WHERE kb_id` 是数据隔离在存储层的兜底（防止跨库串数据，权限章节会再讲）
 
 ### 动手实验
 
@@ -115,7 +115,7 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 3 天：分块（Chunking）
 
-> 📖 今天读：`service/ChunkingService.java` 的 `43-75`（入口方法）、**`103-142`（buildBase 主循环，重点）**、`144-168`（标题判断/路径栈）、`181-227`（overlap/硬切/路径去重）。
+> 📖 今天读：`service/ChunkingService.java` 的 `82-110`（入口方法）、**`162-228`（buildBase 主循环，重点）**、`252-290`（标题判断/路径栈）、`293-326`（overlap/硬切/路径去重）。
 
 ### 概念（大白话）
 
@@ -166,7 +166,7 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 4 天：BM25 与倒排索引（本项目的面试分水岭）
 
-> 📖 今天读：`service/Bm25IndexService.java` 的 `48-92`（search 打分）、`94-108`（build 建索引）、`110-114`（KbIndex 结构）；`util/JiebaUtil.java` 全文（分词口径统一）。
+> 📖 今天读：`service/Bm25IndexService.java` 的 `59-191`（search/searchOne 打分）、`195-213`（build 建索引）、`215-218`（KbIndex 结构）；`util/JiebaUtil.java` 全文（分词口径统一）。
 
 ### 概念（大白话）
 
@@ -211,7 +211,7 @@ WHERE a.id < b.id LIMIT 1;
 
 ## 第 5 天：混合检索与 RRF
 
-> 📖 今天读：`service/RetrievalService.java` 的 **`44-132`（retrieve 主流程，重点）**、`134-149`（父块展开）；`service/QueryRewriteService.java:42-71`（改写）。
+> 📖 今天读：`service/RetrievalService.java` 的 **`68-239`（retrieve 主流程，重点）**、`241-277`（父块展开）；`service/QueryRewriteService.java:46-82`（改写）。
 
 ### 概念（大白话）
 
@@ -239,8 +239,8 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 1. `queryRewriteService.rewrite(query)`：让 LLM 把口语问题改写成多个检索查询（"怎么涨工资"→"调薪制度"），**每个查询独立召回、RRF 跨查询累积**。失败降级为原问题
 2. 每个查询循环内：
-   - `summaryDao.searchByKb`：先搜父块摘要，命中则确定"相关父块范围"（摘要树，第 6 天细讲）
-   - `vectorStoreDao.searchByKb`：向量 Top10（有摘要范围时只在范围内检索）
+   - `summaryDao.searchByKbs`：先搜父块摘要，命中则确定"相关父块范围"（摘要树，第 6 天细讲）
+   - `vectorStoreDao.searchByKbs`：向量 Top10（有摘要范围时只在范围内检索）
    - `bm25IndexService.search`：BM25 Top10
 3. `merged`（LinkedHashMap，key=docId+chunkIndex）：两路命中写入同一个 `RetrievedChunk`，`addScore(1/(k+rank+1))` 累加——**同一个块被多路/多查询命中，得分自动更高**
 4. 按 RRF 得分排序取 Top20 候选 → `rerankService.rerank` 精排取 Top5（第 6 天）
@@ -256,7 +256,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 ## 第 6 天：精排（Rerank）与摘要树
 
-> 📖 今天读：`service/RerankService.java:48-110`、`service/SummaryService.java:32-50`、`dao/pg/SummaryDao.java:39-57`、`dao/pg/VectorStoreDao.java:72-95`（范围内检索 SQL）。
+> 📖 今天读：`service/RerankService.java:48-117`、`service/SummaryService.java:32-50`、`dao/pg/SummaryDao.java:39-57`、`dao/pg/VectorStoreDao.java:74-96`（范围内检索 SQL）。
 
 ### 概念（大白话）
 
@@ -277,8 +277,8 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 - `RerankService.callRerankApi`：POST /rerank，注意 `api-format` 配置——硅基流动（顶层 query/documents）和百炼（嵌套 input）协议不同，本项目做了双协议兼容。换模型服务商只需改 yml
 - `SummaryService.summarize`：入库时给每个父块生成一句话摘要，单块失败置 null（跳过，不影响主流程）
-- `SummaryDao`：摘要表的读写，检索侧 `searchByKb` 返回 (docId, parentIndex) 范围
-- `VectorStoreDao.searchByKb(kbId, vec, topK, scopes)`：范围内检索的重载——SQL 用 `(doc_id, parent_index) IN ((1,2),(3,4))` 行构造器过滤
+- `SummaryDao`：摘要表的读写，检索侧 `searchByKbs` 返回 (docId, parentIndex) 范围
+- `VectorStoreDao.searchByKbs(kbIds, queryVector, topK, scopes)`：范围内检索的重载——SQL 用 `(doc_id, parent_index) IN ((1,2),(3,4))` 行构造器过滤
 
 ### 面试问答
 
@@ -292,7 +292,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 ## 第 7 天：幻觉兜底与 Prompt
 
-> 📖 今天读：`service/QaService.java` 的 **`55-123`（ask 主流程，重点）**、`125-137`（会话历史）、`229-239`（上下文拼接）。
+> 📖 今天读：`service/QaService.java` 的 **`63-138`（ask 主流程，重点）**、`206-218`（会话历史）、`394-403`（上下文拼接）。
 
 ### 概念（大白话）
 
@@ -309,7 +309,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 ### 代码导读（`QaService.ask` 完整走读——第 0 天之后的第二个重点类）
 > 💻 真代码逐行版：跳到文末「附录：四个核心类逐行走读」对应小节。
 
-1. `requireAccess(kbId)`：权限（第 8 天）
+1. `requireRead(kbId)`：读权限校验——库存在即可（第 8 天）
 2. `rateLimitService.checkAsk`：限流（防 key 被刷烧钱）
 3. 多轮会话：`conversationId` 非空 → 校验归属（user+kb 都匹配，否则 404）→ 取最近 3 轮历史；为空 → 新建会话并返回 id
 4. `retrievalService.retrieve`：第 5 天那条链
@@ -331,7 +331,7 @@ k=60 是平滑常数。向量路第 1 名得 1/61≈0.0164，BM25 路第 3 名�
 
 ## 第 8 天：工程细节（RAG 之外，Java 后端面试必问）
 
-> 📖 今天读：`service/DocumentService.java:131-224`（入库主流程+失败补偿）、`service/KnowledgeBaseService.java:75-85`（requireAccess 隔离）、`service/RateLimitService.java:34-49`（限流窗口）。
+> 📖 今天读：`service/DocumentService.java:163-295`（入库主流程+失败补偿）、`service/KnowledgeBaseService.java:82-105`（requireRead/requireManage 读写分权）、`service/RateLimitService.java:34-49`（限流窗口）。
 
 ### 双数据源为什么没有事务（本项目最精彩的工程决策）
 
@@ -342,11 +342,12 @@ MySQL 存业务数据（用户/知识库/文档/日志），PG 存向量。**两
 
 面试讲法：这是"分布式一致性的最终一致方案"，生产环境可升级 Seata/本地消息表。
 
-### RBAC 检索前过滤
+### RBAC 读写分权
 
-"不能检索完再过滤"——本项目两道防线：
-1. 服务层 `requireAccess`：非 owner 直接 403，**根本没进检索阶段**（bob 对 admin 的库 5 个接口全部 403 实测）
-2. 存储层：所有 PG 检索 SQL 强制 `WHERE kb_id = ?`——即使服务层漏了，存储层也查不到别人的数据
+权限分两档，管理动作在进检索之前就被拦截：
+1. 服务层读校验 `requireRead`：库存在即可——问答/文档查看对所有登录用户开放
+2. 服务层管理校验 `requireManage`：非 owner 且非 ADMIN → 403（建库再限 ADMIN）——覆盖删库/传文档/删文档/日志审计
+3. 存储层：所有 PG 检索 SQL 强制 `WHERE kb_id IN (...)`——检索范围显式限定，防止跨库串数据
 
 ### 降级设计清单（背下来，面试问"怎么保证可用性"直接背）
 
@@ -460,7 +461,7 @@ python eval.py --token <登录拿的JWT> --kb <你的知识库id> --k 5
 | 14 | 幻觉怎么抑制 | 三层：阈值短路、Prompt 约束、低温度 |
 | 15 | 怎么证明兜底没过 LLM | 答案与话术逐字一致 |
 | 16 | 双库一致性 | 状态机+失败补偿；升级 Seata |
-| 17 | 权限怎么隔离 | 服务层 requireAccess 前置 + SQL 层 kb_id 兜底 |
+| 17 | 权限怎么隔离 | 读写分权 requireRead/requireManage + SQL 层 kb_id 兜底 |
 | 18 | 瓶颈在哪 | 外部模型 API 排队（压测数据） |
 | 19 | 参数怎么定的 | 30 条标注集评测，单变量对比实验 |
 | 20 | 为什么 Java 不用 Python | 面试岗位栈；手写全链路是稀缺差异点 |
@@ -601,13 +602,13 @@ scores[i] += idf * (tf * (K1 + 1)) /
 ```java
 // 摘要树检索：先搜父块摘要定范围，子块向量检索只在该范围内执行
 if (props.getSummary().getEnabled()) {
-    List<SummaryHit> summaryHits = summaryDao.searchByKb(kbId, queryVector, topN);
+    List<SummaryHit> summaryHits = summaryDao.searchByKbs(kbIds, queryVector, props.getSummary().getTopN());
     if (!summaryHits.isEmpty()) {
         List<Scope> scopes = summaryHits.stream()
                 .map(h -> new Scope(h.docId(), h.parentIndex())).distinct().toList();
-        vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK(), scopes);
+        vectorHits = vectorStoreDao.searchByKbs(kbIds, queryVector, r.getVectorTopK(), scopes);
     } else {
-        vectorHits = vectorStoreDao.searchByKb(kbId, queryVector, r.getVectorTopK());  // 降级全库
+        vectorHits = vectorStoreDao.searchByKbs(kbIds, queryVector, r.getVectorTopK());  // 降级全库
     }
 }
 

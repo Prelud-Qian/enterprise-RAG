@@ -5,7 +5,16 @@ window.ChatPanel = {
       <div class="chat-head">
         <div class="chat-head-left">
           <el-icon><ChatDotRound /></el-icon>
-          <span class="chat-head-name">统一问答</span>
+          <el-radio-group v-model="chat.mode" size="small" :disabled="chat.streaming"
+                          @change="onModeChange">
+            <el-radio-button value="auto">自动选库</el-radio-button>
+            <el-radio-button value="kb">指定知识库</el-radio-button>
+          </el-radio-group>
+          <el-select v-if="chat.mode === 'kb'" v-model="chat.kbId" placeholder="选择知识库"
+                     size="small" class="kb-select" :disabled="chat.streaming"
+                     @change="onModeChange">
+            <el-option v-for="kb in store.kbs" :key="kb.id" :label="kb.name" :value="kb.id" />
+          </el-select>
           <el-tag v-if="chat.conversationId" size="small" type="info" effect="plain">
             会话 #{{ chat.conversationId }}
           </el-tag>
@@ -16,7 +25,7 @@ window.ChatPanel = {
 
       <div class="chat-body" ref="scroller">
         <el-empty v-if="!chat.messages.length"
-                  description="直接提问，系统会自动判断检索哪些知识库" :image-size="90" />
+                  :description="emptyHint" :image-size="90" />
 
         <div v-for="(m, i) in chat.messages" :key="i" class="msg" :class="m.role">
           <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
@@ -65,7 +74,8 @@ window.ChatPanel = {
         <el-button v-if="chat.streaming" type="danger" plain class="send-btn"
                    @click="stop">停止生成</el-button>
         <el-button v-else type="primary" class="send-btn"
-                   :disabled="!draft.trim()" @click="send">发送</el-button>
+                   :disabled="!draft.trim() || (chat.mode === 'kb' && !chat.kbId)"
+                   @click="send">发送</el-button>
       </div>
     </div>
   `,
@@ -84,6 +94,11 @@ window.ChatPanel = {
     },
     chat() {
       return RagStore.store.chat;
+    },
+    emptyHint() {
+      if (this.chat.mode !== 'kb') return '直接提问，系统会自动判断检索哪些知识库';
+      const kb = this.store.kbs.find(k => k.id === this.chat.kbId);
+      return kb ? ('将在《' + kb.name + '》范围内检索并回答') : '请先选择知识库';
     }
   },
   methods: {
@@ -98,6 +113,19 @@ window.ChatPanel = {
       chat.conversationId = null;   // 下一问后端会新建会话，meta 事件回传新 id
       chat.messages = [];
       this.draft = '';
+    },
+    /** 切模式/切库：补默认库 + 开新会话（后端会话归属校验不允许跨模式/跨库复用） */
+    onModeChange() {
+      const chat = this.chat;
+      if (chat.mode === 'kb' && !chat.kbId) {
+        // 默认带左侧当前选中的库，没有就取第一个
+        const kb = RagStore.currentKb() || this.store.kbs[0];
+        chat.kbId = kb ? kb.id : null;
+      }
+      if (chat.conversationId || chat.messages.length) {
+        this.newChat();
+        ElMessage.info('已切换，开启新会话');
+      }
     },
     stop() {
       const chat = this.chat;
@@ -115,6 +143,10 @@ window.ChatPanel = {
       const text = this.draft.trim();
       const chat = this.chat;
       if (!text || chat.streaming) return;
+      if (chat.mode === 'kb' && !chat.kbId) {
+        ElMessage.warning('请先选择知识库');
+        return;
+      }
 
       chat.messages.push({ role: 'user', content: text });
       // 必须包一层 reactive：push 原始对象进 reactive 数组后，直接改这个局部变量
@@ -126,26 +158,32 @@ window.ChatPanel = {
       this.scrollToBottom();
 
       this.ctrl = new AbortController();
+      const handlers = {
+        onMeta: m => {
+          if (m && m.conversationId) chat.conversationId = m.conversationId;
+        },
+        onMessage: t => {
+          // 追加前判断用户是否贴着底部，避免他往上翻看时被强行拽回
+          const el = this.$refs.scroller;
+          const stick = !el || (el.scrollHeight - el.scrollTop - el.clientHeight < 120);
+          msg.content += t;
+          if (stick) this.scrollToBottom();
+        },
+        onSources: s => {
+          msg.sources = s;
+          if (!s.length) msg.fallback = true;
+        },
+        onError: e => {
+          msg.error = e.message;
+        }
+      };
       try {
-        await RagApi.askStream(text, chat.conversationId, {
-          onMeta: m => {
-            if (m && m.conversationId) chat.conversationId = m.conversationId;
-          },
-          onMessage: t => {
-            // 追加前判断用户是否贴着底部，避免他往上翻看时被强行拽回
-            const el = this.$refs.scroller;
-            const stick = !el || (el.scrollHeight - el.scrollTop - el.clientHeight < 120);
-            msg.content += t;
-            if (stick) this.scrollToBottom();
-          },
-          onSources: s => {
-            msg.sources = s;
-            if (!s.length) msg.fallback = true;
-          },
-          onError: e => {
-            msg.error = e.message;
-          }
-        }, this.ctrl.signal);
+        // 按模式分发：auto=统一问答（后端路由选库），kb=指定知识库
+        if (chat.mode === 'kb') {
+          await RagApi.askStreamKb(chat.kbId, text, chat.conversationId, handlers, this.ctrl.signal);
+        } else {
+          await RagApi.askStream(text, chat.conversationId, handlers, this.ctrl.signal);
+        }
       } catch (e) {
         if (e.code === 404) {
           // 会话失效自愈：conversationId 已不存在或不属于当前用户。

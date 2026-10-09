@@ -1,7 +1,7 @@
 # 面试背记清单（enterprise-RAG）
 
 > 用法：数字表和链路图每天过一遍；问题清单遮住右列口头自测。
-> 完整口述答案在 [interview-notes.md](interview-notes.md)（5 道必考题 + 开场 30 秒）；选型对比与踩坑全文在 [README.md](../README.md) 两个「面试素材」章节；工程题对应 [CLAUDE.md](../CLAUDE.md)「关键不变量」。
+> 完整口述答案在 [interview-notes.md](interview-notes.md)（5 道必考题 + 开场 30 秒）；选型对比与踩坑全文在 [README.md](../README.md)「技术选型对比」「坑与优化点」两章；工程题对应 [CLAUDE.md](../CLAUDE.md)「关键不变量」。
 
 ## 一、两条链路（白板级）
 
@@ -19,7 +19,7 @@
 ### 问答（QaService.ask / askStream）
 
 0. 多轮会话：conversationId 非空 → 双归属校验（user + kb，不匹配 404）并取最近 3 轮历史；为空 → 新建会话，id 随 meta 首帧回传
-0. 路由（仅 /api/ask）：LLM 从 listMine 白名单选 ≤3 个相关库；单库直通、无候选 400、调用失败降级全部库
+0. 路由（仅 /api/ask）：LLM 从全部知识库（list 白名单）选 ≤3 个相关库；单库直通、无候选 400、调用失败降级全部库
 1. Query 改写（3 条，失败降级原问题）
 2. 摘要树定范围：摘要 Top3 → (doc_id, parent_index) 范围内检索；摘要为空降级全库
 3. 双路召回：向量 Top10（`<=>` 余弦）+ BM25 Top10（附命中词）
@@ -58,7 +58,7 @@
 | RRF 后为什么还要 Rerank | RRF 只是位置融合；交叉编码器逐对精算 | README 选型 §3 |
 | 摘要树解决什么 | RAPTOR 简化版；先定父块范围再检索，库大不降精度 | interview-notes §3 |
 | 幻觉怎么抑制 | 三层：工程兜底（0.4 短路）+ Prompt 约束 + 检索质量 | §4 |
-| RAG vs 微调 | 高频更新 + 强溯源 + 隔离 → RAG 主场 | §5 |
+| RAG vs 微调 | 高频更新 + 强溯源 + 权限可控 → RAG 主场 | §5 |
 | 为什么手写 BM25 不用 ES | 零中间件；10 万块级够用边界已写明；接口已抽象可替换 | README 选型 §4 |
 | 为什么手写 SQL 不用 PgVectorEmbeddingStore | 表结构自控；隔离/溯源列可索引；能讲清底层 | README 选型 §5 |
 | 为什么 Tika | 统一入口，加格式零成本 | README 选型 §2 |
@@ -70,7 +70,7 @@
 
 | 场景 | 锚点 |
 |---|---|
-| 越权怎么防 | requireAccess（404/403）+ pgvector SQL 强制 kb_id 过滤 + 路由白名单 listMine —— 三层 |
+| 权限怎么设计 | 读写分权：读全员开放（requireRead，仅 404）；管理限 owner/ADMIN（requireManage，403）+ 建库限 ADMIN；pgvector SQL 强制 kb_id 过滤兜底 |
 | 双库一致性 | 无分布式事务；document 状态机 PARSING/READY/FAILED + 失败补偿（删片段、标 FAILED） |
 | BM25 失效 | 文档增删、删库后必须 rebuild(kbId)，否则命中已删数据 |
 | small-to-big 数据形态 | content=子块（检索对象）、parent_content=父块（喂 LLM）；parent-size ≤ size 退化为单级 |
@@ -95,7 +95,7 @@
 
 - **现象**：流式接口偶发空白响应 / 500 空 body
 - **定位**：SseEmitter 发出首帧后响应已 commit，之后的异常再也无法走 GlobalExceptionHandler 写 JSON
-- **修复**：requireAccess / 限流 / 会话解析 / 路由 / 检索全部提到**首个事件之前**同步完成；异常响应显式 `contentType(application/json)`（`produces=text/event-stream` 协商不出 JSON 会退化成 500 空响应体）
+- **修复**：requireRead / 限流 / 会话解析 / 路由 / 检索全部提到**首个事件之前**同步完成；异常响应显式 `contentType(application/json)`（`produces=text/event-stream` 协商不出 JSON 会退化成 500 空响应体）
 - **启示**：SSE 有两条错误通道，分界线是「响应是否已提交」
 
 ### 故事 3：分词口径决定 BM25 效果
@@ -129,14 +129,14 @@
 
 | 问题 | 锚点 |
 |---|---|
-| 用户 A 怎么看不到 B 的知识库？ | 三层：requireAccess + SQL kb_id + listMine 白名单 |
+| 用户之间的权限怎么区分？ | 读写分权：读（问答/文档查看）全员开放；管理（建库/删库/传文档）限 owner/ADMIN；SQL kb_id 过滤兜底防串库 |
 | 两个数据库怎么保证一致？ | 无分布式事务；状态机 + 失败补偿 |
 | 删文档 / 删库要删哪些？ | document_chunk + chunk_summary + BM25 rebuild |
 | 外部模型挂了怎么办？ | 降级六件套（见第四节） |
 | SSE 怎么实现的？为什么不用 WebSocket？ | SseEmitter；需求是单向推送；前端不能用 EventSource（POST + Authorization 头）→ fetch + ReadableStream 手写帧解析 |
 | 限流怎么做的？ | 用户级滑动窗口 10/min（/ask 与 /ask/stream 共用）；单机内存，分布式要换 Redis |
 | 多轮会话怎么设计？ | conversation 表；user+kb 双校验；最近 3 轮注入；qa_log.conversation_id NULL=单轮 |
-| 统一问答怎么选库？ | LLM 从 listMine 选 ≤3；单库直通 / 无候选 400 / 失败降级全库；检索 SQL 仍 kb_id IN |
+| 统一问答怎么选库？ | LLM 从全部知识库（list）选 ≤3；单库直通 / 无候选 400 / 失败降级全库；检索 SQL 仍 kb_id IN |
 | 大文件 / 扫描件怎么处理？ | Tika writeLimit 200 万字符防 OOM；扫描件无文本层不支持（需 OCR） |
 | 自动分类怎么做的？ | Tika 取样 2000 字 → LLM 输出 `id|理由` → 取最后一个数字串（防编号拼接）→ 必须命中候选集（挡幻觉）→ 前端预选、人工确认 |
 

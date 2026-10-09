@@ -1,6 +1,6 @@
 /**
  * 全局状态（Vue.reactive 单例）。
- * chat 是唯一会话状态：统一问答不按知识库分桶，一个窗口一份历史。
+ * chat 是唯一会话状态：一个窗口一份历史（mode=auto 自动选库 / kb 指定知识库，切模式或切库会开新会话）。
  */
 (function (global) {
   'use strict';
@@ -12,7 +12,8 @@
     currentKbId: null,   // 当前选中的知识库
     view: 'chat',        // chat | docs
 
-    chat: { conversationId: null, messages: [], streaming: false },   // 唯一会话状态（统一问答：一个窗口）
+    // 唯一会话状态：mode=auto 自动选库（统一问答）/ kb 指定知识库；kbId 仅 kb 模式使用
+    chat: { mode: 'auto', kbId: null, conversationId: null, messages: [], streaming: false },
 
     docs: [],            // 当前库的文档列表
     docTotal: 0,
@@ -32,7 +33,7 @@
     store.kbs = [];
     store.currentKbId = null;
     store.view = 'chat';
-    store.chat = { conversationId: null, messages: [], streaming: false };
+    store.chat = { mode: 'auto', kbId: null, conversationId: null, messages: [], streaming: false };
     store.docs = [];
     store.docTotal = 0;
     store.docPage = 1;

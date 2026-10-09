@@ -5,13 +5,13 @@
 
 以下为等价 curl 示例，便于命令行执行。`{{token}}` 为登录接口返回的 JWT，放在请求头 `Authorization: Bearer {{token}}`。
 
-> 也可直接用 Swagger UI 在线调试：`http://localhost:8080/swagger-ui.html`（右上角 Authorize 填 JWT）。
+> 也可直接用 Swagger UI 在线调试：`http://localhost:9090/swagger-ui.html`（右上角 Authorize 填 JWT）。
 
 ## 前置条件
 
 1. MySQL / PostgreSQL(pgvector) 已建库建表（见 `sql/` 目录脚本）
 2. 已配置 `DASHSCOPE_API_KEY` 环境变量
-3. 服务已启动：`mvn spring-boot:run`（端口 8080）
+3. 服务已启动：`mvn spring-boot:run`（端口 9090）
 
 ---
 
@@ -20,7 +20,7 @@
 ### 1.1 注册
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/register \
+curl -X POST http://localhost:9090/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 ```
@@ -34,7 +34,7 @@ curl -X POST http://localhost:8080/api/auth/register \
 ### 1.2 登录（拿到 token 后所有接口都要带）
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:9090/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 ```
@@ -55,7 +55,7 @@ curl -X POST http://localhost:8080/api/auth/login \
 ### 1.3 当前用户
 
 ```bash
-curl http://localhost:8080/api/auth/me \
+curl http://localhost:9090/api/auth/me \
   -H "Authorization: Bearer {{token}}"
 ```
 
@@ -66,7 +66,7 @@ curl http://localhost:8080/api/auth/me \
 ### 2.1 创建知识库
 
 ```bash
-curl -X POST http://localhost:8080/api/kb \
+curl -X POST http://localhost:9090/api/kb \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"name":"员工手册知识库","description":"公司制度与福利政策"}'
@@ -75,14 +75,14 @@ curl -X POST http://localhost:8080/api/kb \
 ### 2.2 我的知识库列表
 
 ```bash
-curl http://localhost:8080/api/kb \
+curl http://localhost:9090/api/kb \
   -H "Authorization: Bearer {{token}}"
 ```
 
 ### 2.3 删除知识库（级联删除文档与向量片段）
 
 ```bash
-curl -X DELETE http://localhost:8080/api/kb/1 \
+curl -X DELETE http://localhost:9090/api/kb/1 \
   -H "Authorization: Bearer {{token}}"
 ```
 
@@ -93,7 +93,7 @@ curl -X DELETE http://localhost:8080/api/kb/1 \
 ### 3.1 上传 PDF/Word（用默认分块参数）
 
 ```bash
-curl -X POST http://localhost:8080/api/documents/upload \
+curl -X POST http://localhost:9090/api/documents/upload \
   -H "Authorization: Bearer {{token}}" \
   -F "kbId=1" \
   -F "file=@D:/docs/员工手册.pdf"
@@ -104,7 +104,7 @@ curl -X POST http://localhost:8080/api/documents/upload \
 ### 3.2 上传并覆盖分块参数
 
 ```bash
-curl -X POST http://localhost:8080/api/documents/upload \
+curl -X POST http://localhost:9090/api/documents/upload \
   -H "Authorization: Bearer {{token}}" \
   -F "kbId=1" \
   -F "chunkSize=300" \
@@ -129,14 +129,14 @@ curl -X POST http://localhost:8080/api/documents/upload \
 ### 3.3 文档列表
 
 ```bash
-curl "http://localhost:8080/api/documents?kbId=1&page=1&size=10" \
+curl "http://localhost:9090/api/documents?kbId=1&page=1&size=10" \
   -H "Authorization: Bearer {{token}}"
 ```
 
 ### 3.4 删除文档（级联删除 pgvector 片段 + 重建 BM25 索引）
 
 ```bash
-curl -X DELETE http://localhost:8080/api/documents/1 \
+curl -X DELETE http://localhost:9090/api/documents/1 \
   -H "Authorization: Bearer {{token}}"
 ```
 
@@ -148,14 +148,14 @@ curl -X DELETE http://localhost:8080/api/documents/1 \
 
 ```bash
 # 第 1 轮：正常提问，响应里返回 conversationId
-curl -X POST http://localhost:8080/api/kb/1/ask \
+curl -X POST http://localhost:9090/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"员工年假有多少天？"}'
 # → data.conversationId = 5
 
 # 第 2 轮：带上 conversationId 追问，模型会结合历史理解指代
-curl -X POST http://localhost:8080/api/kb/1/ask \
+curl -X POST http://localhost:9090/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"它需要什么证明？","conversationId":5}'
@@ -164,7 +164,7 @@ curl -X POST http://localhost:8080/api/kb/1/ask \
 ### 4.1 正常提问（命中知识 → 返回答案 + 引用来源）
 
 ```bash
-curl -X POST http://localhost:8080/api/kb/1/ask \
+curl -X POST http://localhost:9090/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"员工年假有多少天？"}'
@@ -195,7 +195,7 @@ curl -X POST http://localhost:8080/api/kb/1/ask \
 ### 4.2 仅检索（不调 LLM，评测/调试用）
 
 ```bash
-curl -X POST http://localhost:8080/api/kb/1/search \
+curl -X POST http://localhost:9090/api/kb/1/search \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"员工年假有多少天？"}'
@@ -229,7 +229,7 @@ curl -X POST http://localhost:8080/api/kb/1/search \
 ### 4.3 流式提问（SSE，逐 token 返回）
 
 ```bash
-curl -N -X POST http://localhost:8080/api/kb/1/ask/stream \
+curl -N -X POST http://localhost:9090/api/kb/1/ask/stream \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"员工年假有多少天？"}'
@@ -251,7 +251,7 @@ data: [{"docId":1,"fileName":"员工手册.pdf","chunkIndex":12,"content":"...",
 ### 4.4 幻觉兜底验证（问库外问题 → 不调 LLM，直接返回固定话术）
 
 ```bash
-curl -X POST http://localhost:8080/api/kb/1/ask \
+curl -X POST http://localhost:9090/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{token}}" \
   -d '{"question":"量子力学中的薛定谔方程怎么推导？"}'
@@ -274,39 +274,49 @@ curl -X POST http://localhost:8080/api/kb/1/ask \
 ### 4.5 问答日志（审计）
 
 ```bash
-curl "http://localhost:8080/api/kb/1/qa-logs?page=1&size=10" \
+curl "http://localhost:9090/api/kb/1/qa-logs?page=1&size=10" \
   -H "Authorization: Bearer {{token}}"
 ```
 
 ---
 
-## 5. RBAC 越权验证（面试演示用）
+## 5. RBAC 权限验证（面试演示用）
 
-用 **admin** 建的知识库，换 **bob** 的 token 去访问，应该拿到 403：
+权限分两档：**读**（检索/提问/文档列表）对所有登录用户开放；**管理**（建库/删库/传文档/删文档/日志审计）仅 owner 或 ADMIN。用 **admin** 建的知识库，换 **bob** 的 token：
 
 ```bash
 # 1) 注册 bob 并登录拿到 bob 的 token
-curl -X POST http://localhost:8080/api/auth/register \
+curl -X POST http://localhost:9090/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"bob","password":"123456"}'
 
-# 2) bob 访问 admin 的知识库 → 403 无权访问该知识库
-curl http://localhost:8080/api/kb/1 \
+# 2) bob 读 admin 的知识库 → 200（读开放）
+curl http://localhost:9090/api/kb/1 \
   -H "Authorization: Bearer {{bob_token}}"
-# → { "code": 403, "message": "无权访问该知识库", "data": null }
 
-# 3) bob 用 admin 的知识库提问 → 同样 403
-curl -X POST http://localhost:8080/api/kb/1/ask \
+# 3) bob 用 admin 的知识库提问 → 200（读开放，正常返回答案与来源）
+curl -X POST http://localhost:9090/api/kb/1/ask \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{bob_token}}" \
   -d '{"question":"员工年假有多少天？"}'
 
-# 4) bob 调管理员接口 → 403 无权限访问
-curl http://localhost:8080/api/admin/users \
+# 4) bob 删 admin 的知识库 → 403 无权操作该知识库（管理动作受限）
+curl -X DELETE http://localhost:9090/api/kb/1 \
+  -H "Authorization: Bearer {{bob_token}}"
+# → { "code": 403, "message": "无权操作该知识库", "data": null }
+
+# 5) bob 建知识库 → 403 仅管理员可创建知识库（普通用户是查询角色）
+curl -X POST http://localhost:9090/api/kb \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer {{bob_token}}" \
+  -d '{"name":"测试库","description":"x"}'
+
+# 6) bob 调管理员接口 → 403 无权限访问
+curl http://localhost:9090/api/admin/users \
   -H "Authorization: Bearer {{bob_token}}"
 
-# 5) 不带 token 调任意接口 → 401 未登录或登录已过期
-curl http://localhost:8080/api/kb
+# 7) 不带 token 调任意接口 → 401 未登录或登录已过期
+curl http://localhost:9090/api/kb
 ```
 
 ## 6. ADMIN 提权与验证
@@ -316,7 +326,7 @@ curl http://localhost:8080/api/kb
 UPDATE sys_user SET role = 'ADMIN' WHERE username = 'admin';
 ```
 
-重新登录 admin 后调 `/api/admin/users` 可拿到用户列表（ADMIN 也可以访问所有人的知识库）。
+重新登录 admin 后：可创建知识库（普通用户不能）、可调 `/api/admin/users`、可管理所有人的知识库（删库/传文档/日志审计）。
 
 ---
 
@@ -327,6 +337,6 @@ UPDATE sys_user SET role = 'ADMIN' WHERE username = 'admin';
 | 用户名已存在 | 400 | `{"code":400,"message":"用户名已存在","data":null}` |
 | 上传超限 | 400 | `{"code":400,"message":"上传文件大小超出限制","data":null}` |
 | 未带 token | 401 | `{"code":401,"message":"未登录或登录已过期","data":null}` |
-| 越权访问 | 403 | `{"code":403,"message":"无权访问该知识库","data":null}` |
+| 越权操作（非 owner 删库/传文档） | 403 | `{"code":403,"message":"无权操作该知识库","data":null}` |
 | 知识库不存在 | 404 | `{"code":404,"message":"知识库不存在","data":null}` |
 | 服务异常 | 500 | `{"code":500,"message":"系统内部错误：...","data":null}` |

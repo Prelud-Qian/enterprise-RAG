@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 
 /**
  * 统一问答的知识库路由：LLM 从当前用户可见的知识库中选最相关的前 N 个。
- * 只读库列表、不针对某个 kb 操作，因此不走 requireAccess。
+ * 只读库列表、不针对某个 kb 操作，因此不做单库权限校验。
  * <p>
  * 不变量 6：LLM 异常 / 解析无有效 id / 输出「无明显匹配」一律降级为全部候选库 —— 宁可多搜，不能漏搜。
  */
@@ -74,7 +74,7 @@ public class KnowledgeRouterService {
         int topN = props.getRouting().getTopN();
         int maxCandidates = props.getRouting().getMaxCandidates();
         List<KnowledgeBaseVO> limited = candidates.size() > maxCandidates
-                ? candidates.subList(0, maxCandidates) : candidates;   // listMine 已按创建时间倒序
+                ? candidates.subList(0, maxCandidates) : candidates;   // 候选已按创建时间倒序
         try {
             String candidateText = limited.stream()
                     .map(c -> "- id=%d 名称=%s 描述=%s".formatted(c.getId(), c.getName(),

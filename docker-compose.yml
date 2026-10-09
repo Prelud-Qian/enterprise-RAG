@@ -48,7 +48,7 @@ services:
     build: .
     container_name: rag-app
     ports:
-      - "8080:8080"
+      - "9090:9090"
     environment:
       # 模型 API Key（必填，宿主机环境变量传入）
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
