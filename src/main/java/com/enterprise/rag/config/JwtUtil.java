@@ -26,6 +26,10 @@ public class JwtUtil {
         this.expireHours = expireHours;
     }
 
+    /**
+     * 把用户三要素（id、用户名、角色）签成一个 JWT 字符串返回——token 里带着身份信息，且带签名防篡改；
+     * 入参就是"要装进 token 的三样东西"，返回值是最终字符串。
+     */
     public String createToken(Long userId, String username, String role) {
         Date now = new Date();
         return Jwts.builder()
@@ -39,11 +43,14 @@ public class JwtUtil {
     }
 
     /** 校验并解析，token 非法或过期抛 JwtException */
+    /**
+     * 拿一个 JWT 字符串，验证签名，然后取出里面的 claims（载荷数据）
+     */
     public Claims parseToken(String token) {
-        return Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+        return Jwts.parser()    // 1. 创建 JWT 解析器
+                .verifyWith(key)    // 2. 把签名密钥交给它 ← 校验用的就是这把 key
+                .build()    // 3. 构建解析器实例
+                .parseSignedClaims(token)   // 4. 解析 + 验签，这一步就是"校验有没有被改过"
+                .getPayload();  // 5. 取出 payload（Claims）
     }
 }

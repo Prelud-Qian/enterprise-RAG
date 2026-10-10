@@ -26,6 +26,8 @@ public class AuthService {
     private final JwtUtil jwtUtil;
 
     public Long register(RegisterRequest req) {
+        // MyBatis-Plus BaseMapper 的方法，执行的 SQL 是 SELECT COUNT(*) FROM sys_user WHERE username = ?，返回满足条件的行数（Long）。
+        // 这里只关心"有没有"，所以用 COUNT 而不是把用户行查出来。
         Long count = userMapper.selectCount(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, req.getUsername()));
         if (count > 0) {
@@ -41,6 +43,7 @@ public class AuthService {
     }
 
     public LoginResponse login(LoginRequest req) {
+        // 执行 SELECT * FROM sys_user WHERE 条件，把一整行数据查出来、映射成实体对象返回；查不到返回 null。
         SysUser user = userMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, req.getUsername()));
         if (user == null || !passwordEncoder.matches(req.getPassword(), user.getPassword())) {
@@ -49,6 +52,7 @@ public class AuthService {
         if (user.getEnabled() == null || user.getEnabled() != 1) {
             throw new BusinessException(403, "账号已被禁用");
         }
+        // 把登录成功的用户"签"成一个 JWT 字符串，下一行装进 LoginResponse 返回给前端；前端存下来，之后每个请求带 Authorization: Bearer <token>。
         String token = jwtUtil.createToken(user.getId(), user.getUsername(), user.getRole());
         return new LoginResponse(token, UserVO.from(user));
     }
