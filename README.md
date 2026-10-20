@@ -119,6 +119,54 @@
 
 BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排索引（term → postings）→ BM25 公式（k1=1.5, b=0.75），索引按知识库懒加载、文档变更后整体重建。
 
+## 快速开始
+
+> ✅ 2026-09-07 全链路冒烟 8/8 通过（注册/登录/建库/上传 docx/问答溯源/幻觉兜底/仅检索/审计日志），部署形态为方式二（VM 内存储 + 本机应用）；六模块实测记录（分块参数/向量校验/混合检索/问答链路/幻觉兜底/性能）见「实测验证记录」。
+>
+> **登录账号**：`admin / admin123`（ADMIN，可建库和管理）；`bob / 123456`（USER，可检索提问、不可管理）；也可在登录页自行注册新用户。
+
+### 方式一：Docker Compose 一键环境（推荐，无需本地装数据库）
+
+```bash
+# 设置模型 API Key（硅基流动，必填）
+set DASHSCOPE_API_KEY=sk-xxx            # Windows
+export DASHSCOPE_API_KEY=sk-xxx         # Linux/Mac
+
+docker compose up -d --build
+```
+
+自动完成：起 MySQL 8 + pgvector（内置 vector 扩展）两个容器并执行建表脚本，再构建并启动应用容器。应用启动后直接调 `http://localhost:9090`。
+
+### 方式二：服务放 VMware 虚拟机（实际部署形态，已跑通）
+
+> 实际部署记录：enterprise-RAG VM（192.168.88.130，Mall 克隆机）承担全部存储。
+> - **MySQL 8**：VM 内 Docker 容器（mysql:latest，3306），root 密码 123456，`enterprise_rag` 业务库已建（`sql/mysql_schema.sql` 已导入）
+> - **PostgreSQL 15 + pgvector**：原生安装（Docker Hub 被墙拉不动 pgvector 镜像，改用阿里镜像 PGDG yum 源：EPEL 装 libzstd → `postgresql15-server` + `pgvector_15`），postgres 密码 123456，`enterprise_rag` 库 + vector 扩展 + HNSW 索引已建（`sql/pgvector_schema.sql` 已导入）
+> - **模型**：硅基流动（`https://api.siliconflow.cn/v1`），LLM=deepseek-ai/DeepSeek-V3.2；embedding/rerank 需账户有余额
+
+```bash
+# Windows 侧：数据库地址与端口已写死在 application.yml（VM 192.168.88.130 / 9090），
+# 只需保证 API Key 已写入系统环境变量（一次性）：setx DASHSCOPE_API_KEY sk-xxx
+mvn spring-boot:run
+```
+
+> 从零复现 VM 部署（新环境时参考）：mysql 走 `docker run -d --name rag-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 mysql:8.0`；PG 原生安装命令见上文描述，或改用 docker-compose（见方式一，需网络可达 Docker Hub 或配置镜像加速）。
+
+### 方式三：本地环境（不用 Docker）
+
+1. **建库建表**：执行 `sql/mysql_schema.sql`（MySQL 8.0）与 `sql/pgvector_schema.sql`（PostgreSQL 14+，需自行安装 pgvector 扩展——Windows 编译安装较麻烦，也可只让 PG 走 Docker：`docker run -d --name pgvector -p 5432:5432 -e POSTGRES_PASSWORD=123456 pgvector/pgvector:pg16`）
+2. **配置**：`application.yml` 中修改 MySQL/PG 连接；设置模型 API Key：
+   ```bash
+   set DASHSCOPE_API_KEY=sk-xxx   # Windows（硅基流动 key）
+   export DASHSCOPE_API_KEY=sk-xxx  # Linux/Mac
+   ```
+   模型配置在 `rag.*` 段，默认硅基流动（LLM=DeepSeek-V3.2 / Embedding=BAAI/bge-m3 / Rerank=BAAI/bge-reranker-v2-m3）；换阿里云百炼只需改 base-url + model + `rag.rerank.api-format: dashscope`
+3. **启动**：
+   ```bash
+   mvn spring-boot:run
+   ```
+4. **调接口**：见 [docs/postman-examples.md](docs/postman-examples.md)，含上传、问答溯源、流式、兜底、RBAC 越权全套演示；或打开 Swagger UI `http://localhost:9090/swagger-ui.html` 在线调试
+
 ## 检索评测
 
 `docs/eval/` 提供检索评测脚本（Python3 标准库，无需 pip），流程：
@@ -200,54 +248,6 @@ BM25 实现见 `Bm25IndexService`：jieba SEARCH 模式分词 → 内存倒排�
 - **多轮对话**：会话级历史上下文，纯指代追问可答、越权会话 404、审计日志按会话归组
 - **可观测性与 CI**：Actuator 健康检查/指标端点 + GitHub Actions 自动跑单测
 - **手写核心不做黑盒**：BM25 倒排索引、pgvector SQL、语义分块全部手写，每一行原理透明可讲
-
-## 快速开始
-
-> ✅ 2026-09-07 全链路冒烟 8/8 通过（注册/登录/建库/上传 docx/问答溯源/幻觉兜底/仅检索/审计日志），部署形态为方式二（VM 内存储 + 本机应用）；六模块实测记录（分块参数/向量校验/混合检索/问答链路/幻觉兜底/性能）见「实测验证记录」。
->
-> **登录账号**：`admin / admin123`（ADMIN，可建库和管理）；`bob / 123456`（USER，可检索提问、不可管理）；也可在登录页自行注册新用户。
-
-### 方式一：Docker Compose 一键环境（推荐，无需本地装数据库）
-
-```bash
-# 设置模型 API Key（硅基流动，必填）
-set DASHSCOPE_API_KEY=sk-xxx            # Windows
-export DASHSCOPE_API_KEY=sk-xxx         # Linux/Mac
-
-docker compose up -d --build
-```
-
-自动完成：起 MySQL 8 + pgvector（内置 vector 扩展）两个容器并执行建表脚本，再构建并启动应用容器。应用启动后直接调 `http://localhost:9090`。
-
-### 方式二：服务放 VMware 虚拟机（实际部署形态，已跑通）
-
-> 实际部署记录：enterprise-RAG VM（192.168.88.130，Mall 克隆机）承担全部存储。
-> - **MySQL 8**：VM 内 Docker 容器（mysql:latest，3306），root 密码 123456，`enterprise_rag` 业务库已建（`sql/mysql_schema.sql` 已导入）
-> - **PostgreSQL 15 + pgvector**：原生安装（Docker Hub 被墙拉不动 pgvector 镜像，改用阿里镜像 PGDG yum 源：EPEL 装 libzstd → `postgresql15-server` + `pgvector_15`），postgres 密码 123456，`enterprise_rag` 库 + vector 扩展 + HNSW 索引已建（`sql/pgvector_schema.sql` 已导入）
-> - **模型**：硅基流动（`https://api.siliconflow.cn/v1`），LLM=deepseek-ai/DeepSeek-V3.2；embedding/rerank 需账户有余额
-
-```bash
-# Windows 侧：数据库地址与端口已写死在 application.yml（VM 192.168.88.130 / 9090），
-# 只需保证 API Key 已写入系统环境变量（一次性）：setx DASHSCOPE_API_KEY sk-xxx
-mvn spring-boot:run
-```
-
-> 从零复现 VM 部署（新环境时参考）：mysql 走 `docker run -d --name rag-mysql -p 3306:3306 -e MYSQL_ROOT_PASSWORD=123456 mysql:8.0`；PG 原生安装命令见上文描述，或改用 docker-compose（见方式一，需网络可达 Docker Hub 或配置镜像加速）。
-
-### 方式三：本地环境（不用 Docker）
-
-1. **建库建表**：执行 `sql/mysql_schema.sql`（MySQL 8.0）与 `sql/pgvector_schema.sql`（PostgreSQL 14+，需自行安装 pgvector 扩展——Windows 编译安装较麻烦，也可只让 PG 走 Docker：`docker run -d --name pgvector -p 5432:5432 -e POSTGRES_PASSWORD=123456 pgvector/pgvector:pg16`）
-2. **配置**：`application.yml` 中修改 MySQL/PG 连接；设置模型 API Key：
-   ```bash
-   set DASHSCOPE_API_KEY=sk-xxx   # Windows（硅基流动 key）
-   export DASHSCOPE_API_KEY=sk-xxx  # Linux/Mac
-   ```
-   模型配置在 `rag.*` 段，默认硅基流动（LLM=DeepSeek-V3.2 / Embedding=BAAI/bge-m3 / Rerank=BAAI/bge-reranker-v2-m3）；换阿里云百炼只需改 base-url + model + `rag.rerank.api-format: dashscope`
-3. **启动**：
-   ```bash
-   mvn spring-boot:run
-   ```
-4. **调接口**：见 [docs/postman-examples.md](docs/postman-examples.md)，含上传、问答溯源、流式、兜底、RBAC 越权全套演示；或打开 Swagger UI `http://localhost:9090/swagger-ui.html` 在线调试
 
 ## 接口清单
 
