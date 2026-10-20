@@ -276,8 +276,6 @@ mvn spring-boot:run
 
 ## 技术选型对比
 
-> 五道必考题的口述版答案（分块权衡 / pgvector 选型 / 混合检索 / 幻觉抑制 / RAG vs 微调）见 **[docs/interview-notes.md](docs/interview-notes.md)**
-
 ### 1. 向量库：pgvector vs Milvus / Chroma
 
 - **选 pgvector 的理由**：数据量百万级向量以内性能足够（HNSW 索引）；不需要额外运维一套独立中间件；向量与元数据同库，检索时直接 JOIN，还能用 SQL 事务/备份生态；底层 `<=>` 余弦距离、HNSW/IVFFlat 索引直接可控
